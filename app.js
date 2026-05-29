@@ -60,6 +60,7 @@ const els = {
   googleLoginButton: document.querySelector("#googleLoginButton"),
   facebookLoginButton: document.querySelector("#facebookLoginButton"),
   logoutButton: document.querySelector("#logoutButton"),
+  authNotice: document.querySelector("#authNotice"),
   userChip: document.querySelector("#userChip"),
   userAvatar: document.querySelector("#userAvatar"),
   userName: document.querySelector("#userName"),
@@ -233,8 +234,47 @@ async function initFirebase() {
 
   const app = initializeApp(FIREBASE_CONFIG);
   const auth = authModule.getAuth(app);
+  authModule.useDeviceLanguage(auth);
   const db = firestoreModule.getFirestore(app);
   state.firebase = { auth, db, ...authModule, ...firestoreModule };
+}
+
+function setAuthNotice(message, level = "info") {
+  if (!message) {
+    els.authNotice.hidden = true;
+    els.authNotice.textContent = "";
+    els.authNotice.className = "auth-notice";
+    return;
+  }
+
+  els.authNotice.hidden = false;
+  els.authNotice.textContent = message;
+  els.authNotice.className = `auth-notice ${level}`.trim();
+}
+
+function getFirebaseFriendlyError(error, provider = "") {
+  const code = error?.code || "";
+  const providerName = provider === "facebook" ? "Facebook" : provider === "google" ? "Google" : "Firebase";
+
+  const messages = {
+    "auth/operation-not-allowed": `${providerName} 登入尚未在 Firebase Authentication 啟用。請到 Authentication > Sign-in method 啟用此登入方式。`,
+    "auth/unauthorized-domain": "目前網域尚未加入 Firebase 授權網域。請到 Authentication > Settings > Authorized domains 加入 plugmoon.github.io。",
+    "auth/popup-blocked": "瀏覽器封鎖了登入彈窗。請允許此網站開啟彈出視窗後再登入。",
+    "auth/popup-closed-by-user": "登入彈窗在完成前被關閉。請再試一次，並在彈窗中完成登入授權。",
+    "auth/cancelled-popup-request": "前一次登入彈窗尚未完成。請稍等後再重新登入。",
+    "auth/network-request-failed": "Firebase 登入網路連線失敗。請確認網路後再試一次。",
+    "auth/account-exists-with-different-credential": "此 Email 已用其他登入方式註冊。請改用原本的登入方式。",
+  };
+
+  if (messages[code]) {
+    return messages[code];
+  }
+
+  if (String(error?.message || "").includes("permission-denied")) {
+    return "Firestore 權限不足。請確認已建立 Firestore Database，並套用 firestore.rules。";
+  }
+
+  return `登入或資料初始化失敗：${code || error?.message || "未知錯誤"}`;
 }
 
 async function loadData() {
@@ -379,10 +419,26 @@ async function login(provider) {
   if (FIREBASE_READY && state.firebase) {
     const fb = state.firebase;
     const authProvider = provider === "google" ? new fb.GoogleAuthProvider() : new fb.FacebookAuthProvider();
-    await fb.signInWithPopup(fb.auth, authProvider);
+    setAuthNotice("正在開啟登入視窗，請在彈窗中完成授權。");
+
+    try {
+      await fb.signInWithPopup(fb.auth, authProvider);
+    } catch (error) {
+      console.error(error);
+
+      if (["auth/popup-blocked", "auth/cancelled-popup-request"].includes(error?.code)) {
+        setAuthNotice("彈窗登入被瀏覽器阻擋，正在改用重新導向登入。", "info");
+        await fb.signInWithRedirect(fb.auth, authProvider);
+        return;
+      }
+
+      setAuthNotice(getFirebaseFriendlyError(error, provider), "error");
+    }
+
     return;
   }
 
+  setAuthNotice("目前使用本機示範登入；填入 Firebase 設定並啟用登入方式後會改用正式登入。", "success");
   state.user = {
     uid: `demo-${provider}`,
     displayName: provider === "google" ? "Google 示範會員" : "Facebook 示範會員",
@@ -404,6 +460,7 @@ async function logout() {
   state.inheritances = [];
   state.orders = [];
   state.cart = [];
+  setAuthNotice("");
   render();
 }
 
@@ -1025,7 +1082,12 @@ async function start() {
 
   if (FIREBASE_READY) {
     await initFirebase();
+    state.firebase
+      .getRedirectResult(state.firebase.auth)
+      .catch((error) => setAuthNotice(getFirebaseFriendlyError(error), "error"));
+
     state.firebase.onAuthStateChanged(state.firebase.auth, async (user) => {
+      state.mode = "firebase";
       state.user = user
         ? {
             uid: user.uid,
@@ -1035,8 +1097,35 @@ async function start() {
           }
         : null;
       if (state.user) {
-        await loadData();
-        await awardDailyLoginCoins();
+        state.profile = {
+          uid: state.user.uid,
+          displayName: state.user.displayName,
+          email: state.user.email,
+          coins: state.profile?.coins || 0,
+          lastLoginAwardDate: state.profile?.lastLoginAwardDate || null,
+          createdAt: state.profile?.createdAt || new Date().toISOString(),
+        };
+
+        try {
+          await loadData();
+          await awardDailyLoginCoins();
+          setAuthNotice("登入成功，已連接 Firebase 雲端資料。", "success");
+        } catch (error) {
+          console.error(error);
+          state.mode = "local";
+          await loadData();
+          await awardDailyLoginCoins();
+          setAuthNotice(
+            `${getFirebaseFriendlyError(error)} 目前已先登入並暫用本機資料模式。`,
+            "error",
+          );
+        }
+      } else {
+        state.profile = null;
+        state.capsules = [];
+        state.inheritances = [];
+        state.orders = [];
+        state.cart = [];
       }
       render();
     });
