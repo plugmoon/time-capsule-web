@@ -258,6 +258,7 @@ function getFirebaseFriendlyError(error, provider = "") {
 
   const messages = {
     "auth/operation-not-allowed": `${providerName} 登入尚未在 Firebase Authentication 啟用。請到 Authentication > Sign-in method 啟用此登入方式。`,
+    "auth/configuration-not-found": "Firebase Authentication 尚未啟用或登入方式尚未設定。請到 Firebase Console > Authentication 按 Get started，並在 Sign-in method 啟用 Google / Facebook。",
     "auth/unauthorized-domain": "目前網域尚未加入 Firebase 授權網域。請到 Authentication > Settings > Authorized domains 加入 plugmoon.github.io。",
     "auth/popup-blocked": "瀏覽器封鎖了登入彈窗。請允許此網站開啟彈出視窗後再登入。",
     "auth/popup-closed-by-user": "登入彈窗在完成前被關閉。請再試一次，並在彈窗中完成登入授權。",
