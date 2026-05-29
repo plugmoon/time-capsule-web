@@ -966,6 +966,22 @@ function renderAdmin() {
   );
 }
 
+function updateCapsuleReleaseControls() {
+  const isDeathMode = els.capsuleReleaseModeInput.value === "death";
+  const selectedCount = selectedValues(els.capsuleBeneficiaryInput).length;
+  const requiredInput = els.capsuleDeathRuleGroup.querySelector('input[name="requiredConfirmations"]');
+
+  els.capsuleDeathRuleGroup.hidden = !isDeathMode;
+  els.unlockInput.disabled = isDeathMode;
+  els.unlockInput.required = !isDeathMode;
+
+  if (requiredInput) {
+    const max = Math.max(1, selectedCount);
+    requiredInput.max = String(max);
+    requiredInput.value = String(Math.min(Math.max(1, Number(requiredInput.value) || 1), max));
+  }
+}
+
 function render() {
   renderAuth();
   renderStats();
@@ -982,7 +998,7 @@ function resetFormDefaults() {
   els.unlockInput.value = toLocalInputValue(tomorrow);
   els.releaseDateInput.min = todayKey();
   els.releaseDateInput.value = todayKey();
-  els.capsuleDeathRuleGroup.hidden = els.capsuleReleaseModeInput.value !== "death";
+  updateCapsuleReleaseControls();
 }
 
 async function addCapsule(event) {
@@ -998,10 +1014,10 @@ async function addCapsule(event) {
     alert("選擇「在我離世後」時，請先新增並指定至少 1 位繼承人。");
     return;
   }
-  const requiredConfirmations = Math.min(
+  const requiredConfirmations = releaseMode === "death" ? Math.min(
     Math.max(1, Number(formData.get("requiredConfirmations")) || 1),
     Math.max(1, beneficiaryIds.length),
-  );
+  ) : 0;
   let images = [];
   let files = [];
   try {
@@ -1016,7 +1032,10 @@ async function addCapsule(event) {
     id: uid(),
     title: formData.get("title").trim(),
     recipient: formData.get("recipient").trim(),
-    unlockAt: new Date(formData.get("unlockAt")).toISOString(),
+    unlockAt:
+      releaseMode === "death"
+        ? addDays(new Date(), Number(formData.get("deathBufferDays")) || Number(state.settings.deathBufferDays) || 7).toISOString()
+        : new Date(formData.get("unlockAt")).toISOString(),
     releaseMode,
     beneficiaryIds,
     requiredConfirmations,
@@ -1333,8 +1352,8 @@ async function addProduct(event) {
   const formData = new FormData(els.productForm);
   const existingProduct = state.products.find((product) => product.id === state.editingProductId);
   const imageFiles = formData.getAll("productImages").filter((file) => file.size);
-  if ((!existingProduct || imageFiles.length > 0) && (imageFiles.length < 3 || imageFiles.length > 5)) {
-    alert("商品圖片請上傳 3-5 張。");
+  if (imageFiles.length > 5) {
+    alert("商品圖片最多上傳 5 張。");
     return;
   }
   let images = existingProduct?.images || [];
@@ -1475,9 +1494,8 @@ function wireEvents() {
   els.tabs.forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   els.capsuleForm.addEventListener("submit", addCapsule);
   els.capsuleForm.addEventListener("reset", () => window.setTimeout(resetFormDefaults, 0));
-  els.capsuleReleaseModeInput.addEventListener("change", () => {
-    els.capsuleDeathRuleGroup.hidden = els.capsuleReleaseModeInput.value !== "death";
-  });
+  els.capsuleReleaseModeInput.addEventListener("change", updateCapsuleReleaseControls);
+  els.capsuleBeneficiaryInput.addEventListener("change", updateCapsuleReleaseControls);
   els.emptyCreateButton.addEventListener("click", () => document.querySelector(".composer-panel").scrollIntoView({ behavior: "smooth" }));
   els.confirmUnlockButton.addEventListener("click", confirmUnlock);
   els.searchInput.addEventListener("input", (event) => {
