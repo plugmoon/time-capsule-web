@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="時光寶盒是一個可部署在 Web 上執行的時光膠囊 APP。"
+    />
+    <title>時光寶盒</title>
+    <link rel="icon" href="assets/time-capsule.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="時光寶盒首頁">
+          <img src="assets/time-capsule.svg" alt="" class="brand-icon" />
+          <span>時光寶盒</span>
+        </a>
+        <nav class="top-actions" aria-label="主要操作">
+          <button class="icon-button" id="exportButton" type="button" title="匯出備份" aria-label="匯出備份">
+            <span aria-hidden="true">⇩</span>
+          </button>
+          <label class="icon-button import-label" for="importFile" title="匯入備份" aria-label="匯入備份">
+            <span aria-hidden="true">⇧</span>
+          </label>
+          <input id="importFile" type="file" accept="application/json" hidden />
+          <button class="primary-button" id="newCapsuleButton" type="button">
+            新增寶盒
+          </button>
+        </nav>
+      </header>
+
+      <main>
+        <section class="overview" aria-label="總覽">
+          <div class="overview-copy">
+            <p class="eyebrow">Time Capsule</p>
+            <h1>收藏現在，交給未來開啟。</h1>
+          </div>
+          <div class="stats-grid" aria-label="寶盒統計">
+            <article class="stat-card">
+              <span class="stat-value" id="totalCount">0</span>
+              <span class="stat-label">全部</span>
+            </article>
+            <article class="stat-card">
+              <span class="stat-value" id="lockedCount">0</span>
+              <span class="stat-label">封存中</span>
+            </article>
+            <article class="stat-card">
+              <span class="stat-value" id="readyCount">0</span>
+              <span class="stat-label">可開啟</span>
+            </article>
+            <article class="stat-card">
+              <span class="stat-value" id="openedCount">0</span>
+              <span class="stat-label">已開啟</span>
+            </article>
+          </div>
+        </section>
+
+        <section class="workspace" aria-label="時光寶盒工作區">
+          <aside class="composer-panel" id="composerPanel">
+            <div class="panel-heading">
+              <h2>建立寶盒</h2>
+              <button class="ghost-icon" id="closeComposerButton" type="button" title="關閉" aria-label="關閉建立表單">
+                ×
+              </button>
+            </div>
+
+            <form id="capsuleForm" class="capsule-form">
+              <label>
+                <span>標題</span>
+                <input id="titleInput" name="title" type="text" maxlength="60" required placeholder="例如：給一年後的我" />
+              </label>
+
+              <label>
+                <span>收件人</span>
+                <input id="recipientInput" name="recipient" type="text" maxlength="40" placeholder="自己、朋友或家人" />
+              </label>
+
+              <label>
+                <span>開啟時間</span>
+                <input id="unlockInput" name="unlockAt" type="datetime-local" required />
+              </label>
+
+              <label>
+                <span>心情標籤</span>
+                <select id="moodInput" name="mood">
+                  <option value="期待">期待</option>
+                  <option value="感謝">感謝</option>
+                  <option value="勇氣">勇氣</option>
+                  <option value="紀念">紀念</option>
+                  <option value="祕密">祕密</option>
+                </select>
+              </label>
+
+              <label>
+                <span>保護密語</span>
+                <input id="secretInput" name="secret" type="password" maxlength="40" autocomplete="new-password" placeholder="可留空" />
+              </label>
+
+              <label class="message-field">
+                <span>內容</span>
+                <textarea id="messageInput" name="message" rows="8" maxlength="1200" required placeholder="把想留給未來的話寫下來。"></textarea>
+              </label>
+
+              <fieldset class="tone-field">
+                <legend>盒身顏色</legend>
+                <label>
+                  <input type="radio" name="tone" value="mint" checked />
+                  <span class="tone-dot mint"></span>
+                  薄荷
+                </label>
+                <label>
+                  <input type="radio" name="tone" value="coral" />
+                  <span class="tone-dot coral"></span>
+                  珊瑚
+                </label>
+                <label>
+                  <input type="radio" name="tone" value="amber" />
+                  <span class="tone-dot amber"></span>
+                  琥珀
+                </label>
+              </fieldset>
+
+              <div class="form-actions">
+                <button class="secondary-button" id="resetButton" type="reset">清除</button>
+                <button class="primary-button" type="submit">封存寶盒</button>
+              </div>
+            </form>
+          </aside>
+
+          <section class="capsule-area" aria-label="寶盒列表">
+            <div class="toolbar">
+              <div class="search-box">
+                <span aria-hidden="true">⌕</span>
+                <input id="searchInput" type="search" placeholder="搜尋標題、收件人或內容" />
+              </div>
+              <div class="segmented-control" role="group" aria-label="篩選狀態">
+                <button type="button" class="segment active" data-filter="all">全部</button>
+                <button type="button" class="segment" data-filter="locked">封存中</button>
+                <button type="button" class="segment" data-filter="ready">可開啟</button>
+                <button type="button" class="segment" data-filter="opened">已開啟</button>
+              </div>
+            </div>
+
+            <div id="capsuleList" class="capsule-list" aria-live="polite"></div>
+
+            <div id="emptyState" class="empty-state" hidden>
+              <img src="assets/time-capsule.svg" alt="" />
+              <h2>尚未建立寶盒</h2>
+              <button class="primary-button" id="emptyCreateButton" type="button">建立第一個寶盒</button>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="unlockDialog" class="unlock-dialog">
+      <form method="dialog" id="unlockForm">
+        <div class="panel-heading">
+          <h2 id="dialogTitle">開啟寶盒</h2>
+          <button class="ghost-icon" value="cancel" type="submit" title="關閉" aria-label="關閉對話框">×</button>
+        </div>
+        <p id="dialogMeta" class="dialog-meta"></p>
+        <label id="secretPrompt" hidden>
+          <span>保護密語</span>
+          <input id="secretCheckInput" type="password" autocomplete="current-password" />
+        </label>
+        <p id="unlockError" class="form-error" hidden></p>
+        <article id="revealedMessage" class="revealed-message" hidden></article>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel" type="submit">關閉</button>
+          <button class="primary-button" id="confirmUnlockButton" type="button">開啟</button>
+        </div>
+      </form>
+    </dialog>
+
+    <template id="capsuleTemplate">
+      <article class="capsule-card">
+        <div class="capsule-card-top">
+          <span class="status-pill"></span>
+          <button class="ghost-icon delete-button" type="button" title="刪除" aria-label="刪除寶盒">×</button>
+        </div>
+        <h2></h2>
+        <p class="capsule-preview"></p>
+        <dl class="capsule-meta">
+          <div>
+            <dt>收件人</dt>
+            <dd class="recipient"></dd>
+          </div>
+          <div>
+            <dt>開啟</dt>
+            <dd class="unlock-date"></dd>
+          </div>
+        </dl>
+        <div class="capsule-card-bottom">
+          <span class="mood-tag"></span>
+          <button class="secondary-button open-button" type="button">查看</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
