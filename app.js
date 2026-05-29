@@ -1,6 +1,10 @@
 const STORAGE_KEY = "timeCapsulePlatform.v2";
 const FIREBASE_CONFIG = window.TIME_CAPSULE_FIREBASE_CONFIG || {};
-const FIREBASE_READY = Boolean(FIREBASE_CONFIG.apiKey && !String(FIREBASE_CONFIG.apiKey).startsWith("YOUR_"));
+const DEMO_MODE = new URLSearchParams(window.location.search).has("demo");
+const FIREBASE_READY = !DEMO_MODE && Boolean(FIREBASE_CONFIG.apiKey && !String(FIREBASE_CONFIG.apiKey).startsWith("YOUR_"));
+const MB = 1024 * 1024;
+const MAX_IMAGE_SIZE = 10 * MB;
+const MAX_FILE_SIZE = 100 * MB;
 
 const DEFAULT_SETTINGS = {
   dailyLoginCoins: 10,
@@ -8,6 +12,7 @@ const DEFAULT_SETTINGS = {
   shippingFee: 80,
   freeShippingThreshold: 1200,
   notificationEmail: "admin@example.com",
+  deathBufferDays: 7,
 };
 
 const DEFAULT_PRODUCTS = [
@@ -48,6 +53,7 @@ const state = {
   orders: [],
   notifications: [],
   inheritances: [],
+  beneficiaries: [],
   cart: [],
   filter: "all",
   query: "",
@@ -60,6 +66,7 @@ const els = {
   googleLoginButton: document.querySelector("#googleLoginButton"),
   facebookLoginButton: document.querySelector("#facebookLoginButton"),
   logoutButton: document.querySelector("#logoutButton"),
+  checkInButton: document.querySelector("#checkInButton"),
   authNotice: document.querySelector("#authNotice"),
   userChip: document.querySelector("#userChip"),
   userAvatar: document.querySelector("#userAvatar"),
@@ -78,6 +85,9 @@ const els = {
   searchInput: document.querySelector("#searchInput"),
   filterButtons: document.querySelectorAll("[data-filter]"),
   capsuleTemplate: document.querySelector("#capsuleTemplate"),
+  capsuleBeneficiaryInput: document.querySelector("#capsuleBeneficiaryInput"),
+  capsuleReleaseModeInput: document.querySelector("#capsuleReleaseModeInput"),
+  capsuleDeathRuleGroup: document.querySelector("#capsuleDeathRuleGroup"),
   unlockInput: document.querySelector("#unlockInput"),
   unlockDialog: document.querySelector("#unlockDialog"),
   unlockForm: document.querySelector("#unlockForm"),
@@ -98,6 +108,8 @@ const els = {
   cartTotal: document.querySelector("#cartTotal"),
   useCoinsInput: document.querySelector("#useCoinsInput"),
   checkoutButton: document.querySelector("#checkoutButton"),
+  beneficiaryForm: document.querySelector("#beneficiaryForm"),
+  beneficiaryList: document.querySelector("#beneficiaryList"),
   legacyForm: document.querySelector("#legacyForm"),
   legacyList: document.querySelector("#legacyList"),
   releaseModeInput: document.querySelector("#releaseModeInput"),
@@ -105,6 +117,7 @@ const els = {
   releaseDateInput: document.querySelector("#releaseDateInput"),
   settingsForm: document.querySelector("#settingsForm"),
   productForm: document.querySelector("#productForm"),
+  productImagesInput: document.querySelector("#productImagesInput"),
   adminTimeline: document.querySelector("#adminTimeline"),
   confirmDeathButton: document.querySelector("#confirmDeathButton"),
 };
@@ -147,11 +160,50 @@ function parseList(value) {
     .filter(Boolean);
 }
 
+function selectedValues(select) {
+  return Array.from(select.selectedOptions).map((option) => option.value);
+}
+
+function addDays(dateValue, days) {
+  const date = new Date(dateValue);
+  date.setDate(date.getDate() + Number(days || 0));
+  return date;
+}
+
+function getBeneficiaryName(id) {
+  return state.beneficiaries.find((beneficiary) => beneficiary.id === id)?.name || "未指定";
+}
+
 function getCapsuleStatus(capsule) {
   if (capsule.openedAt) {
     return "opened";
   }
+  if (capsule.releaseMode === "death") {
+    const required = Number(capsule.requiredConfirmations) || 1;
+    const count = capsule.deathConfirmations?.length || 0;
+    if (count < required || !capsule.deathConfirmedAt) {
+      return "locked";
+    }
+    return addDays(capsule.deathConfirmedAt, capsule.deathBufferDays || state.settings.deathBufferDays) <= new Date()
+      ? "ready"
+      : "locked";
+  }
   return new Date(capsule.unlockAt).getTime() <= Date.now() ? "ready" : "locked";
+}
+
+function getCapsuleUnlockLabel(capsule) {
+  if (capsule.releaseMode !== "death") {
+    return formatDateTime(capsule.unlockAt);
+  }
+
+  const required = Number(capsule.requiredConfirmations) || 1;
+  const count = capsule.deathConfirmations?.length || 0;
+  if (count < required || !capsule.deathConfirmedAt) {
+    return `離世確認 ${count}/${required}`;
+  }
+
+  const releaseAt = addDays(capsule.deathConfirmedAt, capsule.deathBufferDays || state.settings.deathBufferDays);
+  return `緩衝至 ${releaseAt.toLocaleDateString("zh-TW")}`;
 }
 
 function getCountdownText(unlockAt) {
@@ -200,6 +252,72 @@ function writeLocalStore(data) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
+function openAssetDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("timeCapsuleAssets", 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore("assets", { keyPath: "id" });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function saveAsset(file, kind, maxSize) {
+  if (!file) {
+    return null;
+  }
+  if (file.size > maxSize) {
+    throw new Error(`${file.name} 超過大小限制。`);
+  }
+
+  const asset = {
+    id: uid(),
+    kind,
+    name: file.name,
+    type: file.type || "application/octet-stream",
+    size: file.size,
+    createdAt: new Date().toISOString(),
+    blob: file,
+  };
+
+  const db = await openAssetDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction("assets", "readwrite");
+    tx.objectStore("assets").put(asset);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+
+  const { blob, ...meta } = asset;
+  return meta;
+}
+
+async function saveAssets(files, kind, maxSize) {
+  const assets = [];
+  for (const file of Array.from(files || [])) {
+    const asset = await saveAsset(file, kind, maxSize);
+    if (asset) {
+      assets.push(asset);
+    }
+  }
+  return assets;
+}
+
+async function getAssetUrl(assetId) {
+  const db = await openAssetDb();
+  const asset = await new Promise((resolve, reject) => {
+    const tx = db.transaction("assets", "readonly");
+    const request = tx.objectStore("assets").get(assetId);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+
+  return asset?.blob ? URL.createObjectURL(asset.blob) : "";
+}
+
 function getUserBucket(store = readLocalStore()) {
   if (!state.user) {
     return null;
@@ -212,10 +330,12 @@ function getUserBucket(store = readLocalStore()) {
       email: state.user.email,
       coins: 0,
       lastLoginAwardDate: null,
+      lastCheckInDate: null,
       createdAt: new Date().toISOString(),
     },
     capsules: [],
     inheritances: [],
+    beneficiaries: [],
   };
 
   return store.users[state.user.uid];
@@ -294,19 +414,30 @@ async function loadData() {
   state.profile = bucket?.profile || null;
   state.capsules = bucket?.capsules || [];
   state.inheritances = bucket?.inheritances || [];
+  state.beneficiaries = bucket?.beneficiaries || [];
 }
 
 async function loadFirebaseData() {
   const fb = state.firebase;
   const userRef = fb.doc(fb.db, "users", state.user.uid);
   const settingsRef = fb.doc(fb.db, "platform", "settings");
-  const [profileSnap, settingsSnap, productSnap, capsuleSnap, inheritanceSnap, orderSnap, notificationSnap] =
+  const [
+    profileSnap,
+    settingsSnap,
+    productSnap,
+    capsuleSnap,
+    inheritanceSnap,
+    beneficiarySnap,
+    orderSnap,
+    notificationSnap,
+  ] =
     await Promise.all([
       fb.getDoc(userRef),
       fb.getDoc(settingsRef),
       fb.getDocs(fb.collection(fb.db, "products")),
       fb.getDocs(fb.collection(fb.db, "users", state.user.uid, "capsules")),
       fb.getDocs(fb.collection(fb.db, "users", state.user.uid, "inheritances")),
+      fb.getDocs(fb.collection(fb.db, "users", state.user.uid, "beneficiaries")),
       fb.getDocs(fb.query(fb.collection(fb.db, "orders"), fb.where("userId", "==", state.user.uid))),
       fb.getDocs(fb.collection(fb.db, "notifications")),
     ]);
@@ -319,12 +450,14 @@ async function loadFirebaseData() {
         email: state.user.email,
         coins: 0,
         lastLoginAwardDate: null,
+        lastCheckInDate: null,
         createdAt: new Date().toISOString(),
       };
   state.settings = settingsSnap.exists() ? { ...DEFAULT_SETTINGS, ...settingsSnap.data() } : { ...DEFAULT_SETTINGS };
   state.products = productSnap.empty ? DEFAULT_PRODUCTS : productSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.capsules = capsuleSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.inheritances = inheritanceSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  state.beneficiaries = beneficiarySnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.orders = orderSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.notifications = notificationSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
@@ -349,6 +482,7 @@ async function saveLocalData() {
     bucket.profile = state.profile;
     bucket.capsules = state.capsules;
     bucket.inheritances = state.inheritances;
+    bucket.beneficiaries = state.beneficiaries;
   }
 
   writeLocalStore(store);
@@ -361,6 +495,8 @@ async function persistCollectionItem(collectionName, item) {
       await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "capsules", item.id), item, { merge: true });
     } else if (collectionName === "inheritances") {
       await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "inheritances", item.id), item, { merge: true });
+    } else if (collectionName === "beneficiaries") {
+      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "beneficiaries", item.id), item, { merge: true });
     } else if (collectionName === "products") {
       await fb.setDoc(fb.doc(fb.db, "products", item.id), item, { merge: true });
     } else if (collectionName === "orders") {
@@ -387,6 +523,9 @@ async function persistAll() {
     for (const inheritance of state.inheritances) {
       await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "inheritances", inheritance.id), inheritance, { merge: true });
     }
+    for (const beneficiary of state.beneficiaries) {
+      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "beneficiaries", beneficiary.id), beneficiary, { merge: true });
+    }
     for (const product of state.products) {
       await fb.setDoc(fb.doc(fb.db, "products", product.id), product, { merge: true });
     }
@@ -411,6 +550,8 @@ async function deleteRemoteItem(collectionName, id) {
     await fb.deleteDoc(fb.doc(fb.db, "users", state.user.uid, "capsules", id));
   } else if (collectionName === "inheritances") {
     await fb.deleteDoc(fb.doc(fb.db, "users", state.user.uid, "inheritances", id));
+  } else if (collectionName === "beneficiaries") {
+    await fb.deleteDoc(fb.doc(fb.db, "users", state.user.uid, "beneficiaries", id));
   } else if (collectionName === "products") {
     await fb.deleteDoc(fb.doc(fb.db, "products", id));
   }
@@ -447,7 +588,6 @@ async function login(provider) {
     provider,
   };
   await loadData();
-  await awardDailyLoginCoins();
   render();
 }
 
@@ -465,19 +605,21 @@ async function logout() {
   render();
 }
 
-async function awardDailyLoginCoins() {
+async function checkInForCoins() {
   if (!state.profile) {
     return;
   }
 
   const today = todayKey();
-  if (state.profile.lastLoginAwardDate === today) {
+  if (state.profile.lastCheckInDate === today || state.profile.lastLoginAwardDate === today) {
+    setAuthNotice("今天已完成簽到，明天再回來領取時光幣。", "info");
     return;
   }
 
   const amount = Number(state.settings.dailyLoginCoins) || 0;
   state.profile.coins = (Number(state.profile.coins) || 0) + amount;
   state.profile.lastLoginAwardDate = today;
+  state.profile.lastCheckInDate = today;
   state.profile.lastLoginAwardAmount = amount;
   state.notifications.unshift({
     id: uid(),
@@ -487,6 +629,8 @@ async function awardDailyLoginCoins() {
     createdAt: new Date().toISOString(),
   });
   await persistAll();
+  setAuthNotice(`簽到成功，已獲得 ${amount} 枚時光幣。`, "success");
+  render();
 }
 
 function requireLogin() {
@@ -501,6 +645,10 @@ function renderAuth() {
   const signedIn = Boolean(state.user);
   els.userChip.hidden = !signedIn;
   els.logoutButton.hidden = !signedIn;
+  els.checkInButton.hidden = !signedIn;
+  els.checkInButton.disabled =
+    signedIn && (state.profile?.lastCheckInDate === todayKey() || state.profile?.lastLoginAwardDate === todayKey());
+  els.checkInButton.textContent = els.checkInButton.disabled ? "今日已簽到" : "立即簽到";
   els.googleLoginButton.hidden = signedIn;
   els.facebookLoginButton.hidden = signedIn;
   els.userName.textContent = state.profile?.displayName || state.user?.displayName || "訪客";
@@ -517,6 +665,40 @@ function renderStats() {
   els.coinStat.textContent = state.profile?.coins || 0;
   els.productCount.textContent = state.products.length;
   els.legacyCount.textContent = state.inheritances.length;
+}
+
+function renderBeneficiaries() {
+  const options = state.beneficiaries.map((beneficiary) => {
+    const option = document.createElement("option");
+    option.value = beneficiary.id;
+    option.textContent = `${beneficiary.name}（${beneficiary.email}）`;
+    return option;
+  });
+  els.capsuleBeneficiaryInput.replaceChildren(...options);
+
+  els.beneficiaryList.replaceChildren(
+    ...(state.beneficiaries.length
+      ? state.beneficiaries.map((beneficiary) => {
+          const item = document.createElement("article");
+          item.className = "beneficiary-item";
+          item.innerHTML = `
+            <div>
+              <strong>${escapeHtml(beneficiary.name)}</strong>
+              <span>${escapeHtml(beneficiary.email)}</span>
+            </div>
+            <small>${escapeHtml(beneficiary.relationship || "未設定關係")}</small>
+          `;
+          const button = document.createElement("button");
+          button.className = "ghost-icon";
+          button.type = "button";
+          button.textContent = "×";
+          button.title = "刪除受益人";
+          button.addEventListener("click", () => deleteBeneficiary(beneficiary.id));
+          item.append(button);
+          return item;
+        })
+      : [Object.assign(document.createElement("p"), { className: "hint", textContent: "尚未新增受益人。" })]),
+  );
 }
 
 function getFilteredCapsules() {
@@ -553,15 +735,27 @@ function renderCapsules() {
 
     card.dataset.tone = capsule.tone;
     card.querySelector("h2").textContent = capsule.title;
+    const attachmentCount = (capsule.images?.length || 0) + (capsule.files?.length || 0) + (capsule.videoUrl ? 1 : 0);
     card.querySelector(".capsule-preview").textContent =
-      status === "locked" ? "內容已封存，等待指定時間。" : capsule.message;
-    card.querySelector(".recipient").textContent = capsule.recipient || "未指定";
-    card.querySelector(".unlock-date").textContent = formatDateTime(capsule.unlockAt);
+      status === "locked"
+        ? `內容已封存，含 ${attachmentCount} 個附件或連結。`
+        : capsule.message;
+    card.querySelector(".recipient").textContent =
+      capsule.beneficiaryIds?.length
+        ? capsule.beneficiaryIds.map(getBeneficiaryName).join("、")
+        : capsule.recipient || "未指定";
+    card.querySelector(".unlock-date").textContent = getCapsuleUnlockLabel(capsule);
     card.querySelector(".mood-tag").textContent = capsule.mood;
 
     statusPill.classList.add(status);
     statusPill.textContent =
-      status === "opened" ? "已開啟" : status === "ready" ? "可開啟" : getCountdownText(capsule.unlockAt);
+      status === "opened"
+        ? "已開啟"
+        : status === "ready"
+          ? "可開啟"
+          : capsule.releaseMode === "death"
+            ? getCapsuleUnlockLabel(capsule)
+            : getCountdownText(capsule.unlockAt);
     openButton.textContent = status === "locked" ? "查看倒數" : "開啟";
     openButton.addEventListener("click", () => showCapsuleDialog(capsule.id));
     fragment.querySelector(".delete-button").addEventListener("click", () => deleteCapsule(capsule.id));
@@ -590,6 +784,7 @@ function renderShop() {
     ...products.map((product) => {
       const card = document.createElement("article");
       card.className = "product-card";
+      const firstImage = product.images?.[0];
       card.innerHTML = `
         <div class="product-art">${product.name.slice(0, 1)}</div>
         <div class="product-body">
@@ -609,6 +804,16 @@ function renderShop() {
       button.disabled = Number(product.stock) <= 0;
       button.addEventListener("click", () => addToCart(product.id));
       card.querySelector(".product-body").append(button);
+      if (firstImage?.id) {
+        getAssetUrl(firstImage.id).then((url) => {
+          if (url) {
+            const art = card.querySelector(".product-art");
+            art.textContent = "";
+            art.style.backgroundImage = `url("${url}")`;
+            art.classList.add("has-image");
+          }
+        });
+      }
       return card;
     }),
   );
@@ -737,6 +942,7 @@ function renderAdmin() {
 function render() {
   renderAuth();
   renderStats();
+  renderBeneficiaries();
   renderCapsules();
   renderShop();
   renderLegacy();
@@ -749,6 +955,7 @@ function resetFormDefaults() {
   els.unlockInput.value = toLocalInputValue(tomorrow);
   els.releaseDateInput.min = todayKey();
   els.releaseDateInput.value = todayKey();
+  els.capsuleDeathRuleGroup.hidden = els.capsuleReleaseModeInput.value !== "death";
 }
 
 async function addCapsule(event) {
@@ -758,14 +965,43 @@ async function addCapsule(event) {
   }
 
   const formData = new FormData(els.capsuleForm);
+  const beneficiaryIds = selectedValues(els.capsuleBeneficiaryInput);
+  const releaseMode = formData.get("releaseMode");
+  if (releaseMode === "death" && beneficiaryIds.length === 0) {
+    alert("選擇「在我離世後」時，請先新增並指定至少 1 位受益人。");
+    return;
+  }
+  const requiredConfirmations = Math.min(
+    Math.max(1, Number(formData.get("requiredConfirmations")) || 1),
+    Math.max(1, beneficiaryIds.length),
+  );
+  let images = [];
+  let files = [];
+  try {
+    images = await saveAssets(formData.getAll("imageFiles").filter((file) => file.size), "capsule-image", MAX_IMAGE_SIZE);
+    files = await saveAssets(formData.getAll("documentFiles").filter((file) => file.size), "capsule-file", MAX_FILE_SIZE);
+  } catch (error) {
+    alert(error.message);
+    return;
+  }
+
   const capsule = {
     id: uid(),
     title: formData.get("title").trim(),
     recipient: formData.get("recipient").trim(),
     unlockAt: new Date(formData.get("unlockAt")).toISOString(),
+    releaseMode,
+    beneficiaryIds,
+    requiredConfirmations,
+    deathConfirmations: [],
+    deathConfirmedAt: null,
+    deathBufferDays: Number(state.settings.deathBufferDays) || 7,
     mood: formData.get("mood"),
     secret: formData.get("secret").trim(),
     message: formData.get("message").trim(),
+    videoUrl: formData.get("videoUrl").trim(),
+    images,
+    files,
     tone: formData.get("tone"),
     createdAt: new Date().toISOString(),
     openedAt: null,
@@ -816,11 +1052,52 @@ function showCapsuleDialog(id) {
   els.unlockDialog.showModal();
 }
 
-function revealCapsule(capsule) {
+async function revealCapsule(capsule) {
   els.unlockError.hidden = true;
   els.secretPrompt.hidden = true;
   els.confirmUnlockButton.hidden = true;
-  els.revealedMessage.textContent = capsule.message;
+  els.revealedMessage.replaceChildren();
+
+  const text = document.createElement("p");
+  text.textContent = capsule.message;
+  els.revealedMessage.append(text);
+
+  if (capsule.videoUrl) {
+    const video = document.createElement("a");
+    video.href = capsule.videoUrl;
+    video.target = "_blank";
+    video.rel = "noopener";
+    video.className = "attachment-link";
+    video.textContent = `開啟影片連結：${capsule.videoUrl}`;
+    els.revealedMessage.append(video);
+  }
+
+  for (const image of capsule.images || []) {
+    const url = await getAssetUrl(image.id);
+    const figure = document.createElement("figure");
+    figure.className = "revealed-asset";
+    figure.innerHTML = `<figcaption>${escapeHtml(image.name)}</figcaption>`;
+    if (url) {
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = image.name;
+      figure.prepend(img);
+    }
+    els.revealedMessage.append(figure);
+  }
+
+  for (const file of capsule.files || []) {
+    const url = await getAssetUrl(file.id);
+    const link = document.createElement("a");
+    link.className = "attachment-link";
+    link.textContent = `${file.name} (${Math.ceil(file.size / MB)} MB)`;
+    if (url) {
+      link.href = url;
+      link.download = file.name;
+    }
+    els.revealedMessage.append(link);
+  }
+
   els.revealedMessage.hidden = false;
 }
 
@@ -838,7 +1115,7 @@ async function confirmUnlock() {
 
   capsule.openedAt = capsule.openedAt ?? new Date().toISOString();
   await persistCollectionItem("capsules", capsule);
-  revealCapsule(capsule);
+  await revealCapsule(capsule);
   render();
 }
 
@@ -864,6 +1141,36 @@ function addToCart(productId) {
 function removeFromCart(productId) {
   state.cart = state.cart.filter((item) => item.id !== productId);
   renderCart();
+}
+
+async function addBeneficiary(event) {
+  event.preventDefault();
+  if (!requireLogin()) {
+    return;
+  }
+
+  const formData = new FormData(els.beneficiaryForm);
+  const beneficiary = {
+    id: uid(),
+    name: formData.get("name").trim(),
+    email: formData.get("email").trim(),
+    relationship: formData.get("relationship").trim(),
+    createdAt: new Date().toISOString(),
+  };
+  state.beneficiaries.unshift(beneficiary);
+  await persistCollectionItem("beneficiaries", beneficiary);
+  els.beneficiaryForm.reset();
+  render();
+}
+
+async function deleteBeneficiary(id) {
+  if (!confirm("刪除此受益人？既有寶盒中的指定紀錄不會被自動移除。")) {
+    return;
+  }
+  state.beneficiaries = state.beneficiaries.filter((item) => item.id !== id);
+  await deleteRemoteItem("beneficiaries", id);
+  await saveLocalData();
+  render();
 }
 
 async function checkout() {
@@ -974,6 +1281,7 @@ async function saveSettings(event) {
   const formData = new FormData(els.settingsForm);
   state.settings = {
     dailyLoginCoins: Number(formData.get("dailyLoginCoins")) || 0,
+    deathBufferDays: Number(formData.get("deathBufferDays")) || 7,
     coinValueTwd: Number(formData.get("coinValueTwd")) || 0,
     shippingFee: Number(formData.get("shippingFee")) || 0,
     freeShippingThreshold: Number(formData.get("freeShippingThreshold")) || 0,
@@ -987,6 +1295,18 @@ async function saveSettings(event) {
 async function addProduct(event) {
   event.preventDefault();
   const formData = new FormData(els.productForm);
+  const imageFiles = formData.getAll("productImages").filter((file) => file.size);
+  if (imageFiles.length < 3 || imageFiles.length > 5) {
+    alert("商品圖片請上傳 3-5 張。");
+    return;
+  }
+  let images = [];
+  try {
+    images = await saveAssets(imageFiles, "product-image", MAX_IMAGE_SIZE);
+  } catch (error) {
+    alert(error.message);
+    return;
+  }
   const product = {
     id: uid(),
     name: formData.get("name").trim(),
@@ -994,6 +1314,7 @@ async function addProduct(event) {
     price: Number(formData.get("price")) || 0,
     stock: Number(formData.get("stock")) || 0,
     description: formData.get("description").trim(),
+    images,
     createdAt: new Date().toISOString(),
   };
   state.products.unshift(product);
@@ -1007,11 +1328,30 @@ async function confirmDeathForCurrentUser() {
     return;
   }
 
-  if (!confirm("此操作代表人工審核已確認目前用戶過世，將釋放死亡條件的數位繼承訊息。")) {
+  if (!confirm("此操作會模擬受益人共同確認您已離世，並啟動緩衝期。")) {
     return;
   }
 
   const now = new Date().toISOString();
+  state.capsules
+    .filter((item) => item.releaseMode === "death" && !item.deathConfirmedAt)
+    .forEach((item) => {
+      const required = Number(item.requiredConfirmations) || 1;
+      item.deathConfirmations = (item.beneficiaryIds || []).slice(0, required).map((beneficiaryId) => ({
+        beneficiaryId,
+        confirmedAt: now,
+      }));
+      item.deathConfirmedAt = now;
+      item.deathBufferDays = Number(item.deathBufferDays || state.settings.deathBufferDays) || 7;
+      state.notifications.unshift({
+        id: uid(),
+        type: "capsule-death-confirmed",
+        userId: state.user.uid,
+        message: `「${item.title}」已達離世共同確認門檻，將於 ${item.deathBufferDays} 天緩衝後開啟。`,
+        createdAt: now,
+      });
+    });
+
   state.inheritances
     .filter((item) => item.releaseMode === "death" && !item.deathConfirmedAt)
     .forEach((item) => {
@@ -1046,9 +1386,13 @@ function wireEvents() {
   els.googleLoginButton.addEventListener("click", () => login("google"));
   els.facebookLoginButton.addEventListener("click", () => login("facebook"));
   els.logoutButton.addEventListener("click", logout);
+  els.checkInButton.addEventListener("click", checkInForCoins);
   els.tabs.forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.view)));
   els.capsuleForm.addEventListener("submit", addCapsule);
   els.capsuleForm.addEventListener("reset", () => window.setTimeout(resetFormDefaults, 0));
+  els.capsuleReleaseModeInput.addEventListener("change", () => {
+    els.capsuleDeathRuleGroup.hidden = els.capsuleReleaseModeInput.value !== "death";
+  });
   els.emptyCreateButton.addEventListener("click", () => document.querySelector(".composer-panel").scrollIntoView({ behavior: "smooth" }));
   els.confirmUnlockButton.addEventListener("click", confirmUnlock);
   els.searchInput.addEventListener("input", (event) => {
@@ -1068,6 +1412,7 @@ function wireEvents() {
   });
   els.useCoinsInput.addEventListener("input", renderCart);
   els.checkoutButton.addEventListener("click", checkout);
+  els.beneficiaryForm.addEventListener("submit", addBeneficiary);
   els.legacyForm.addEventListener("submit", addInheritance);
   els.releaseModeInput.addEventListener("change", () => {
     els.releaseDateLabel.hidden = els.releaseModeInput.value === "death";
@@ -1104,18 +1449,17 @@ async function start() {
           email: state.user.email,
           coins: state.profile?.coins || 0,
           lastLoginAwardDate: state.profile?.lastLoginAwardDate || null,
+          lastCheckInDate: state.profile?.lastCheckInDate || null,
           createdAt: state.profile?.createdAt || new Date().toISOString(),
         };
 
         try {
           await loadData();
-          await awardDailyLoginCoins();
           setAuthNotice("登入成功，已連接 Firebase 雲端資料。", "success");
         } catch (error) {
           console.error(error);
           state.mode = "local";
           await loadData();
-          await awardDailyLoginCoins();
           setAuthNotice(
             `${getFirebaseFriendlyError(error)} 目前已先登入並暫用本機資料模式。`,
             "error",
