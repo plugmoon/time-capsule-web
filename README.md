@@ -9,7 +9,7 @@
 - 到期開啟：到達指定時間後可開啟閱讀內容。
 - 密語保護：建立時可選擇加入保護密語。
 - 搜尋與篩選：依標題、收件人、內容、狀態查找。
-- Google / Facebook 登入：填入 Firebase 設定後啟用正式 OAuth 登入；未設定時使用本機示範模式。
+- Google 登入：填入 Firebase 設定後啟用正式 OAuth 登入；未設定時使用本機示範模式。
 - 時光幣：登入每日發放，可由後台設定發放數量與折抵比例。
 - 時光幣：使用者點選「立即簽到」後發放，可由後台設定發放數量與折抵比例。
 - 購物商城：商品分類、價格、庫存、3-5 張商品圖片、運費、時光幣折抵、訂單與通知紀錄。
@@ -47,6 +47,6 @@ powershell -ExecutionPolicy Bypass -File .\deploy-github.ps1 -RepoName "time-cap
 
 ## Firebase 正式模式
 
-請參考 `FIREBASE_SETUP.md`。正式 Google / Facebook 登入與雲端資料需要 Firebase Authentication、Cloud Firestore 與對應 OAuth provider 設定。
+請參考 `FIREBASE_SETUP.md`。正式 Google 登入與雲端資料需要 Firebase Authentication、Cloud Firestore 與對應 OAuth provider 設定。
 
 若你已從 Firebase Console 複製 `firebaseConfig` 物件，可雙擊 `set-firebase-config.bat` 自動寫入 `firebase-config.js`。
