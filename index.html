@@ -88,7 +88,7 @@
                   <input id="unlockInput" name="unlockAt" type="datetime-local" required />
                 </label>
                 <label>
-                  <span>指定受益人</span>
+                  <span>指定繼承人</span>
                   <select id="capsuleBeneficiaryInput" name="beneficiaryIds" multiple size="4"></select>
                 </label>
                 <label>
@@ -100,10 +100,18 @@
                 </label>
                 <div class="death-rule-group" id="capsuleDeathRuleGroup" hidden>
                   <label>
-                    <span>需共同確認離世的受益人人數</span>
+                    <span>需共同確認離世的繼承人人數</span>
                     <input name="requiredConfirmations" type="number" min="1" step="1" value="1" />
                   </label>
-                  <p class="hint">確認人數不可超過此寶盒指定的受益人人數。</p>
+                  <label>
+                    <span>緩衝時間</span>
+                    <select name="deathBufferDays">
+                      <option value="7">7 天</option>
+                      <option value="14">14 天</option>
+                      <option value="30">30 天</option>
+                    </select>
+                  </label>
+                  <p class="hint">確認人數不可超過此寶盒指定的繼承人人數。</p>
                 </div>
                 <label>
                   <span>心情標籤</span>
@@ -230,7 +238,7 @@
           <section class="workspace">
             <aside class="composer-panel">
               <div class="panel-heading">
-                <h2>新增受益人</h2>
+                <h2>新增繼承人</h2>
               </div>
               <form id="beneficiaryForm" class="capsule-form">
                 <label>
@@ -245,13 +253,13 @@
                   <span>關係</span>
                   <input name="relationship" type="text" maxlength="40" placeholder="家人、朋友、律師等" />
                 </label>
-                <button class="primary-button" type="submit">新增受益人</button>
+                <button class="primary-button" type="submit">新增繼承人</button>
               </form>
 
               <div class="beneficiary-list" id="beneficiaryList"></div>
 
               <div class="panel-heading">
-                <h2>指定數位繼承人</h2>
+                <h2>繼承人</h2>
               </div>
               <form id="legacyForm" class="capsule-form">
                 <label>
@@ -259,12 +267,8 @@
                   <input name="title" type="text" maxlength="80" required placeholder="例如：給家人的最後一封信" />
                 </label>
                 <label>
-                  <span>繼承人姓名</span>
-                  <input name="heirNames" type="text" required placeholder="多位請用逗號分隔" />
-                </label>
-                <label>
-                  <span>繼承人 Email</span>
-                  <input name="heirEmails" type="text" required placeholder="多位請用逗號分隔" />
+                  <span>選擇繼承人，可複選</span>
+                  <select id="legacyBeneficiaryInput" name="heirIds" multiple size="5" required></select>
                 </label>
                 <label>
                   <span>開啟條件</span>
@@ -360,9 +364,12 @@
                 </label>
                 <label>
                   <span>商品圖片，請上傳 3-5 張</span>
-                  <input id="productImagesInput" name="productImages" type="file" accept="image/*" multiple required />
+                  <input id="productImagesInput" name="productImages" type="file" accept="image/*" multiple />
                 </label>
-                <button class="primary-button" type="submit">新增商品</button>
+                <div class="form-actions">
+                  <button class="secondary-button" id="cancelProductEditButton" type="button" hidden>取消編輯</button>
+                  <button class="primary-button" id="productSubmitButton" type="submit">新增商品</button>
+                </div>
               </form>
             </section>
 
