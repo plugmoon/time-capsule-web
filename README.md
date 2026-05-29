@@ -46,3 +46,5 @@ powershell -ExecutionPolicy Bypass -File .\deploy-github.ps1 -RepoName "time-cap
 ## Firebase 正式模式
 
 請參考 `FIREBASE_SETUP.md`。正式 Google / Facebook 登入與雲端資料需要 Firebase Authentication、Cloud Firestore 與對應 OAuth provider 設定。
+
+若你已從 Firebase Console 複製 `firebaseConfig` 物件，可雙擊 `set-firebase-config.bat` 自動寫入 `firebase-config.js`。
