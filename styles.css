@@ -666,6 +666,12 @@ textarea {
   background: linear-gradient(135deg, var(--mint-deep), var(--coral));
   font-size: 3rem;
   font-weight: 900;
+  background-position: center;
+  background-size: cover;
+}
+
+.product-art.has-image {
+  color: transparent;
 }
 
 .product-body {
@@ -777,6 +783,75 @@ textarea {
 .timeline-item time {
   color: var(--muted);
   font-weight: 700;
+}
+
+.beneficiary-list {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 28px;
+}
+
+.beneficiary-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.beneficiary-item div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.beneficiary-item span,
+.beneficiary-item small {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.death-rule-group {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: rgba(240, 234, 223, 0.58);
+}
+
+.revealed-message {
+  display: grid;
+  gap: 12px;
+}
+
+.revealed-asset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.revealed-asset img {
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border-radius: var(--radius);
+  background: #fff;
+}
+
+.attachment-link {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fff;
+  color: var(--mint-deep);
+  font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .unlock-dialog {
