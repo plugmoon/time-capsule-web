@@ -51,6 +51,7 @@ button {
   justify-content: space-between;
   gap: 16px;
   min-height: 68px;
+  flex-wrap: wrap;
 }
 
 .brand {
@@ -81,6 +82,30 @@ button {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.auth-notice {
+  flex-basis: 100%;
+  margin: -6px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(200, 138, 31, 0.36);
+  border-radius: var(--radius);
+  background: rgba(200, 138, 31, 0.12);
+  color: #684309;
+  line-height: 1.5;
+  font-weight: 800;
+}
+
+.auth-notice.error {
+  border-color: rgba(216, 100, 74, 0.36);
+  background: rgba(216, 100, 74, 0.12);
+  color: #893822;
+}
+
+.auth-notice.success {
+  border-color: rgba(31, 157, 143, 0.36);
+  background: rgba(31, 157, 143, 0.12);
+  color: var(--mint-deep);
 }
 
 .user-chip {
