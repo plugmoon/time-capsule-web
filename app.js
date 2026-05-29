@@ -13,6 +13,15 @@ const DEFAULT_SETTINGS = {
   freeShippingThreshold: 1200,
   notificationEmail: "admin@example.com",
   deathBufferDays: 7,
+  currentUserRole: "member",
+};
+
+const ROLE_LABELS = {
+  superAdmin: "最高管理員",
+  gold: "黃金級用戶",
+  silver: "白銀級用戶",
+  member: "一般用戶",
+  guest: "訪客",
 };
 
 const DEFAULT_PRODUCTS = [
@@ -65,7 +74,6 @@ const state = {
 const els = {
   runtimeMode: document.querySelector("#runtimeMode"),
   googleLoginButton: document.querySelector("#googleLoginButton"),
-  facebookLoginButton: document.querySelector("#facebookLoginButton"),
   logoutButton: document.querySelector("#logoutButton"),
   checkInButton: document.querySelector("#checkInButton"),
   authNotice: document.querySelector("#authNotice"),
@@ -212,6 +220,16 @@ function getCapsuleUnlockLabel(capsule) {
 
   const releaseAt = addDays(capsule.deathConfirmedAt, capsule.deathBufferDays || state.settings.deathBufferDays);
   return `緩衝至 ${releaseAt.toLocaleDateString("zh-TW")}`;
+}
+
+function getDeathLockedMessage(capsule) {
+  const required = Number(capsule.requiredConfirmations) || 1;
+  const count = capsule.deathConfirmations?.length || 0;
+  if (count < required || !capsule.deathConfirmedAt) {
+    return `此寶盒設定為「在我離世後」才能開啟。需 ${required} 位指定繼承人共同確認離世，目前已確認 ${count} 位。`;
+  }
+  const releaseAt = addDays(capsule.deathConfirmedAt, capsule.deathBufferDays || state.settings.deathBufferDays);
+  return `指定繼承人已完成離世確認。此寶盒仍在 ${capsule.deathBufferDays || state.settings.deathBufferDays} 天緩衝期內，將於 ${releaseAt.toLocaleDateString("zh-TW")} 後開啟。`;
 }
 
 function getCountdownText(unlockAt) {
@@ -382,11 +400,11 @@ function setAuthNotice(message, level = "info") {
 
 function getFirebaseFriendlyError(error, provider = "") {
   const code = error?.code || "";
-  const providerName = provider === "facebook" ? "Facebook" : provider === "google" ? "Google" : "Firebase";
+  const providerName = provider === "google" ? "Google" : "Firebase";
 
   const messages = {
     "auth/operation-not-allowed": `${providerName} 登入尚未在 Firebase Authentication 啟用。請到 Authentication > Sign-in method 啟用此登入方式。`,
-    "auth/configuration-not-found": "Firebase Authentication 尚未啟用或登入方式尚未設定。請到 Firebase Console > Authentication 按 Get started，並在 Sign-in method 啟用 Google / Facebook。",
+    "auth/configuration-not-found": "Firebase Authentication 尚未啟用或登入方式尚未設定。請到 Firebase Console > Authentication 按 Get started，並在 Sign-in method 啟用 Google。",
     "auth/unauthorized-domain": "目前網域尚未加入 Firebase 授權網域。請到 Authentication > Settings > Authorized domains 加入 plugmoon.github.io。",
     "auth/popup-blocked": "瀏覽器封鎖了登入彈窗。請允許此網站開啟彈出視窗後再登入。",
     "auth/popup-closed-by-user": "登入彈窗在完成前被關閉。請再試一次，並在彈窗中完成登入授權。",
@@ -459,6 +477,7 @@ async function loadFirebaseData() {
         coins: 0,
         lastLoginAwardDate: null,
         lastCheckInDate: null,
+        role: state.settings.currentUserRole || "member",
         createdAt: new Date().toISOString(),
       };
   state.settings = settingsSnap.exists() ? { ...DEFAULT_SETTINGS, ...settingsSnap.data() } : { ...DEFAULT_SETTINGS };
@@ -568,7 +587,7 @@ async function deleteRemoteItem(collectionName, id) {
 async function login(provider) {
   if (FIREBASE_READY && state.firebase) {
     const fb = state.firebase;
-    const authProvider = provider === "google" ? new fb.GoogleAuthProvider() : new fb.FacebookAuthProvider();
+    const authProvider = new fb.GoogleAuthProvider();
     setAuthNotice("正在開啟登入視窗，請在彈窗中完成授權。");
 
     try {
@@ -591,7 +610,7 @@ async function login(provider) {
   setAuthNotice("目前使用本機示範登入；填入 Firebase 設定並啟用登入方式後會改用正式登入。", "success");
   state.user = {
     uid: `demo-${provider}`,
-    displayName: provider === "google" ? "Google 示範會員" : "Facebook 示範會員",
+    displayName: "Google 示範會員",
     email: `${provider}@demo.local`,
     provider,
   };
@@ -645,7 +664,7 @@ function requireLogin() {
   if (state.user) {
     return true;
   }
-  alert("請先使用 Google 或 Facebook 登入。");
+  alert("請先使用 Google 登入。");
   return false;
 }
 
@@ -658,14 +677,15 @@ function renderAuth() {
     signedIn && (state.profile?.lastCheckInDate === todayKey() || state.profile?.lastLoginAwardDate === todayKey());
   els.checkInButton.textContent = els.checkInButton.disabled ? "今日已簽到" : "立即簽到";
   els.googleLoginButton.hidden = signedIn;
-  els.facebookLoginButton.hidden = signedIn;
   els.userName.textContent = state.profile?.displayName || state.user?.displayName || "訪客";
   els.userAvatar.textContent = (state.profile?.displayName || "時").slice(0, 1);
   els.coinBalance.textContent = state.profile?.coins || 0;
+  const role = state.profile?.role || state.settings.currentUserRole || "member";
+  els.userName.textContent = `${state.profile?.displayName || state.user?.displayName || "訪客"}・${ROLE_LABELS[role] || ROLE_LABELS.member}`;
   els.runtimeMode.textContent =
     state.mode === "firebase"
       ? "目前使用 Firebase Authentication / Firestore 雲端模式。"
-      : "目前使用本機示範模式；填入 Firebase 設定後可啟用正式 Google / Facebook 登入與雲端資料。";
+      : "目前使用本機示範模式；填入 Firebase 設定後可啟用正式 Google 登入與雲端資料。";
 }
 
 function renderStats() {
@@ -946,6 +966,7 @@ function renderAdmin() {
       title: note.message,
       body: note.type,
       date: note.createdAt,
+      mailto: note.mailto || "",
     })),
   ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -960,6 +981,13 @@ function renderAdmin() {
             <p>${escapeHtml(item.body)}</p>
             <time>${formatDateTime(item.date)}</time>
           `;
+          if (item.mailto) {
+            const link = document.createElement("a");
+            link.className = "attachment-link";
+            link.href = item.mailto;
+            link.textContent = "開啟 Email 草稿";
+            row.append(link);
+          }
           return row;
         })
       : [Object.assign(document.createElement("p"), { className: "hint", textContent: "尚無訂單或通知。" })]),
@@ -1087,7 +1115,8 @@ function showCapsuleDialog(id) {
   els.secretPrompt.hidden = status === "locked" || !capsule.secret;
 
   if (status === "locked") {
-    els.revealedMessage.textContent = `剩餘 ${getCountdownText(capsule.unlockAt)}`;
+    els.revealedMessage.textContent =
+      capsule.releaseMode === "death" ? getDeathLockedMessage(capsule) : `剩餘 ${getCountdownText(capsule.unlockAt)}`;
     els.revealedMessage.hidden = false;
   }
 
@@ -1204,9 +1233,25 @@ async function addBeneficiary(event) {
     createdAt: new Date().toISOString(),
   };
   state.beneficiaries.unshift(beneficiary);
+  const registerUrl = `${location.origin}${location.pathname}`;
+  const subject = "您已被指定為時光寶盒繼承人";
+  const body = `${state.profile?.displayName || state.user?.displayName || "一位用戶"} 已將您設定為時光寶盒繼承人。請前往 ${registerUrl} 使用 Google 登入註冊，未來可依設定條件接收重要訊息。`;
+  const mailto = `mailto:${encodeURIComponent(beneficiary.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  state.notifications.unshift({
+    id: uid(),
+    type: "heir-email",
+    userId: state.user.uid,
+    message: `已建立繼承人通知：${beneficiary.name}（${beneficiary.email}）`,
+    mailto,
+    createdAt: new Date().toISOString(),
+  });
   await persistCollectionItem("beneficiaries", beneficiary);
+  await persistAll();
   els.beneficiaryForm.reset();
   render();
+  if (confirm(`是否立即開啟 Email 草稿通知 ${beneficiary.name}？`)) {
+    window.location.href = mailto;
+  }
 }
 
 async function deleteBeneficiary(id) {
@@ -1341,7 +1386,11 @@ async function saveSettings(event) {
     shippingFee: Number(formData.get("shippingFee")) || 0,
     freeShippingThreshold: Number(formData.get("freeShippingThreshold")) || 0,
     notificationEmail: formData.get("notificationEmail").trim(),
+    currentUserRole: formData.get("currentUserRole") || "member",
   };
+  if (state.profile) {
+    state.profile.role = state.settings.currentUserRole;
+  }
   await persistAll();
   render();
   alert("設定已儲存。");
@@ -1488,7 +1537,6 @@ function switchView(viewId) {
 
 function wireEvents() {
   els.googleLoginButton.addEventListener("click", () => login("google"));
-  els.facebookLoginButton.addEventListener("click", () => login("facebook"));
   els.logoutButton.addEventListener("click", logout);
   els.checkInButton.addEventListener("click", checkInForCoins);
   els.tabs.forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.view)));
@@ -1554,6 +1602,7 @@ async function start() {
           coins: state.profile?.coins || 0,
           lastLoginAwardDate: state.profile?.lastLoginAwardDate || null,
           lastCheckInDate: state.profile?.lastCheckInDate || null,
+          role: state.profile?.role || state.settings.currentUserRole || "member",
           createdAt: state.profile?.createdAt || new Date().toISOString(),
         };
 
