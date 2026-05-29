@@ -26,7 +26,7 @@ Firebase 官方文件：
 - `users/{uid}`：會員資料、時光幣餘額。
 - `users/{uid}/capsules/{capsuleId}`：使用者自己的時光寶盒。
 - `users/{uid}/inheritances/{inheritanceId}`：使用者自己的數位繼承設定。
-- `users/{uid}/beneficiaries/{beneficiaryId}`：使用者預先設定的受益人。
+- `users/{uid}/beneficiaries/{beneficiaryId}`：使用者預先設定的繼承人。
 - `platform/settings`：時光幣比例、登入獎勵、運費、通知信箱。
 - `products/{productId}`：商城商品。
 - `orders/{orderId}`：訂單。
