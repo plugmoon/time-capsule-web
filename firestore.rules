@@ -20,6 +20,10 @@ service cloud.firestore {
       match /inheritances/{inheritanceId} {
         allow read, write: if owns(uid);
       }
+
+      match /beneficiaries/{beneficiaryId} {
+        allow read, write: if owns(uid);
+      }
     }
 
     match /products/{productId} {
