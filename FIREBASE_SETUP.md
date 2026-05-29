@@ -5,20 +5,17 @@
 - 本機示範模式：未填 Firebase 設定時啟用，資料存在瀏覽器 `localStorage`。
 - Firebase 雲端模式：填入 `firebase-config.js` 後啟用，使用 Firebase Authentication 與 Cloud Firestore。
 
-## 啟用 Google / Facebook 登入
+## 啟用 Google 登入
 
 1. 前往 Firebase Console 建立專案。
 2. 在 Authentication 啟用 Google provider。
-3. 在 Authentication 啟用 Facebook provider。
-4. Facebook 登入需要到 Meta for Developers 建立 App，取得 App ID 與 App Secret，並把 Firebase 顯示的 OAuth redirect URI 加到 Facebook Login 設定。
-5. 在 Firebase 專案設定新增 Web App，複製 Firebase config。
-6. 將 config 貼到 `firebase-config.js`。
-7. 在 Authentication 的 Authorized domains 加入正式網域，例如 `plugmoon.github.io`。
+3. 在 Firebase 專案設定新增 Web App，複製 Firebase config。
+4. 將 config 貼到 `firebase-config.js`。
+5. 在 Authentication 的 Authorized domains 加入正式網域，例如 `plugmoon.github.io`。
 
 Firebase 官方文件：
 
 - Google 登入：https://firebase.google.com/docs/auth/web/google-signin
-- Facebook 登入：https://firebase.google.com/docs/auth/web/facebook-login
 - Firestore 快速入門：https://firebase.google.com/docs/firestore/quickstart
 
 ## Firestore 資料集合
