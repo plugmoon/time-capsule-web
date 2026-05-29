@@ -27,7 +27,6 @@
           </div>
           <button class="primary-button" id="checkInButton" type="button" hidden>立即簽到</button>
           <button class="secondary-button" id="googleLoginButton" type="button">Google 登入</button>
-          <button class="secondary-button" id="facebookLoginButton" type="button">Facebook 登入</button>
           <button class="icon-button" id="logoutButton" type="button" title="登出" aria-label="登出" hidden>↪</button>
         </div>
         <p class="auth-notice" id="authNotice" hidden></p>
@@ -332,6 +331,16 @@
                 <label>
                   <span>通知收件信箱</span>
                   <input name="notificationEmail" type="email" />
+                </label>
+                <label>
+                  <span>目前用戶角色</span>
+                  <select name="currentUserRole">
+                    <option value="superAdmin">最高管理員</option>
+                    <option value="gold">黃金級用戶</option>
+                    <option value="silver">白銀級用戶</option>
+                    <option value="member">一般用戶</option>
+                    <option value="guest">訪客</option>
+                  </select>
                 </label>
                 <button class="primary-button" type="submit">儲存設定</button>
               </form>
