@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">時光寶盒圖示</title>
+  <desc id="desc">一個帶有時鐘刻度的寶盒圖示</desc>
+  <rect width="128" height="128" rx="24" fill="#F7F4ED"/>
+  <path d="M22 55h84v44a9 9 0 0 1-9 9H31a9 9 0 0 1-9-9V55Z" fill="#1F9D8F"/>
+  <path d="M32 37h64a10 10 0 0 1 10 10v13H22V47a10 10 0 0 1 10-10Z" fill="#D8644A"/>
+  <path d="M22 58h84v10H22V58Z" fill="#12685F"/>
+  <path d="M58 33h12v78H58V33Z" fill="#F0EADF"/>
+  <circle cx="64" cy="68" r="20" fill="#FFFFFF" stroke="#20242A" stroke-width="4"/>
+  <path d="M64 56v13l10 6" fill="none" stroke="#20242A" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+  <path d="M41 34c2-12 12-18 23-5 11-13 21-7 23 5" fill="none" stroke="#C88A1F" stroke-linecap="round" stroke-width="8"/>
+</svg>
