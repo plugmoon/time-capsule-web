@@ -59,6 +59,7 @@ const state = {
   query: "",
   category: "all",
   activeCapsuleId: null,
+  editingProductId: null,
 };
 
 const els = {
@@ -86,6 +87,7 @@ const els = {
   filterButtons: document.querySelectorAll("[data-filter]"),
   capsuleTemplate: document.querySelector("#capsuleTemplate"),
   capsuleBeneficiaryInput: document.querySelector("#capsuleBeneficiaryInput"),
+  legacyBeneficiaryInput: document.querySelector("#legacyBeneficiaryInput"),
   capsuleReleaseModeInput: document.querySelector("#capsuleReleaseModeInput"),
   capsuleDeathRuleGroup: document.querySelector("#capsuleDeathRuleGroup"),
   unlockInput: document.querySelector("#unlockInput"),
@@ -118,6 +120,8 @@ const els = {
   settingsForm: document.querySelector("#settingsForm"),
   productForm: document.querySelector("#productForm"),
   productImagesInput: document.querySelector("#productImagesInput"),
+  productSubmitButton: document.querySelector("#productSubmitButton"),
+  cancelProductEditButton: document.querySelector("#cancelProductEditButton"),
   adminTimeline: document.querySelector("#adminTimeline"),
   confirmDeathButton: document.querySelector("#confirmDeathButton"),
 };
@@ -172,6 +176,10 @@ function addDays(dateValue, days) {
 
 function getBeneficiaryName(id) {
   return state.beneficiaries.find((beneficiary) => beneficiary.id === id)?.name || "未指定";
+}
+
+function getBeneficiary(id) {
+  return state.beneficiaries.find((beneficiary) => beneficiary.id === id) || null;
 }
 
 function getCapsuleStatus(capsule) {
@@ -443,7 +451,7 @@ async function loadFirebaseData() {
     ]);
 
   state.profile = profileSnap.exists()
-    ? profileSnap.data()
+    ? { lastCheckInDate: null, ...profileSnap.data() }
     : {
         uid: state.user.uid,
         displayName: state.user.displayName,
@@ -675,6 +683,7 @@ function renderBeneficiaries() {
     return option;
   });
   els.capsuleBeneficiaryInput.replaceChildren(...options);
+  els.legacyBeneficiaryInput.replaceChildren(...options.map((option) => option.cloneNode(true)));
 
   els.beneficiaryList.replaceChildren(
     ...(state.beneficiaries.length
@@ -692,12 +701,12 @@ function renderBeneficiaries() {
           button.className = "ghost-icon";
           button.type = "button";
           button.textContent = "×";
-          button.title = "刪除受益人";
+          button.title = "刪除繼承人";
           button.addEventListener("click", () => deleteBeneficiary(beneficiary.id));
           item.append(button);
           return item;
         })
-      : [Object.assign(document.createElement("p"), { className: "hint", textContent: "尚未新增受益人。" })]),
+      : [Object.assign(document.createElement("p"), { className: "hint", textContent: "尚未新增繼承人。" })]),
   );
 }
 
@@ -804,6 +813,22 @@ function renderShop() {
       button.disabled = Number(product.stock) <= 0;
       button.addEventListener("click", () => addToCart(product.id));
       card.querySelector(".product-body").append(button);
+
+      const manage = document.createElement("div");
+      manage.className = "product-actions";
+      const edit = document.createElement("button");
+      edit.className = "secondary-button";
+      edit.type = "button";
+      edit.textContent = "修改";
+      edit.addEventListener("click", () => startProductEdit(product.id));
+      const remove = document.createElement("button");
+      remove.className = "secondary-button danger-button";
+      remove.type = "button";
+      remove.textContent = "刪除";
+      remove.addEventListener("click", () => deleteProduct(product.id));
+      manage.append(edit, remove);
+      card.querySelector(".product-body").append(manage);
+
       if (firstImage?.id) {
         getAssetUrl(firstImage.id).then((url) => {
           if (url) {
@@ -906,6 +931,8 @@ function renderAdmin() {
       field.value = value;
     }
   }
+  els.productSubmitButton.textContent = state.editingProductId ? "儲存商品" : "新增商品";
+  els.cancelProductEditButton.hidden = !state.editingProductId;
 
   const items = [
     ...state.orders.map((order) => ({
@@ -968,7 +995,7 @@ async function addCapsule(event) {
   const beneficiaryIds = selectedValues(els.capsuleBeneficiaryInput);
   const releaseMode = formData.get("releaseMode");
   if (releaseMode === "death" && beneficiaryIds.length === 0) {
-    alert("選擇「在我離世後」時，請先新增並指定至少 1 位受益人。");
+    alert("選擇「在我離世後」時，請先新增並指定至少 1 位繼承人。");
     return;
   }
   const requiredConfirmations = Math.min(
@@ -995,7 +1022,7 @@ async function addCapsule(event) {
     requiredConfirmations,
     deathConfirmations: [],
     deathConfirmedAt: null,
-    deathBufferDays: Number(state.settings.deathBufferDays) || 7,
+    deathBufferDays: Number(formData.get("deathBufferDays")) || Number(state.settings.deathBufferDays) || 7,
     mood: formData.get("mood"),
     secret: formData.get("secret").trim(),
     message: formData.get("message").trim(),
@@ -1164,7 +1191,7 @@ async function addBeneficiary(event) {
 }
 
 async function deleteBeneficiary(id) {
-  if (!confirm("刪除此受益人？既有寶盒中的指定紀錄不會被自動移除。")) {
+  if (!confirm("刪除此繼承人？既有寶盒中的指定紀錄不會被自動移除。")) {
     return;
   }
   state.beneficiaries = state.beneficiaries.filter((item) => item.id !== id);
@@ -1226,12 +1253,21 @@ async function addInheritance(event) {
   }
 
   const formData = new FormData(els.legacyForm);
-  const names = parseList(formData.get("heirNames"));
-  const emails = parseList(formData.get("heirEmails"));
-  const heirs = names.map((name, index) => ({
-    name,
-    email: emails[index] || emails[0] || "",
-  }));
+  const heirIds = selectedValues(els.legacyBeneficiaryInput);
+  if (heirIds.length === 0) {
+    alert("請至少選擇 1 位繼承人。");
+    return;
+  }
+
+  const heirs = heirIds
+    .map(getBeneficiary)
+    .filter(Boolean)
+    .map((beneficiary) => ({
+      id: beneficiary.id,
+      name: beneficiary.name,
+      email: beneficiary.email,
+      relationship: beneficiary.relationship || "",
+    }));
 
   const inheritance = {
     id: uid(),
@@ -1295,31 +1331,80 @@ async function saveSettings(event) {
 async function addProduct(event) {
   event.preventDefault();
   const formData = new FormData(els.productForm);
+  const existingProduct = state.products.find((product) => product.id === state.editingProductId);
   const imageFiles = formData.getAll("productImages").filter((file) => file.size);
-  if (imageFiles.length < 3 || imageFiles.length > 5) {
+  if ((!existingProduct || imageFiles.length > 0) && (imageFiles.length < 3 || imageFiles.length > 5)) {
     alert("商品圖片請上傳 3-5 張。");
     return;
   }
-  let images = [];
+  let images = existingProduct?.images || [];
   try {
-    images = await saveAssets(imageFiles, "product-image", MAX_IMAGE_SIZE);
+    if (imageFiles.length > 0) {
+      images = await saveAssets(imageFiles, "product-image", MAX_IMAGE_SIZE);
+    }
   } catch (error) {
     alert(error.message);
     return;
   }
   const product = {
-    id: uid(),
+    id: existingProduct?.id || uid(),
     name: formData.get("name").trim(),
     category: formData.get("category").trim(),
     price: Number(formData.get("price")) || 0,
     stock: Number(formData.get("stock")) || 0,
     description: formData.get("description").trim(),
     images,
-    createdAt: new Date().toISOString(),
+    createdAt: existingProduct?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   };
-  state.products.unshift(product);
+  if (existingProduct) {
+    state.products = state.products.map((item) => (item.id === product.id ? product : item));
+  } else {
+    state.products.unshift(product);
+  }
   await persistCollectionItem("products", product);
+  state.editingProductId = null;
   els.productForm.reset();
+  render();
+}
+
+function startProductEdit(id) {
+  const product = state.products.find((item) => item.id === id);
+  if (!product) {
+    return;
+  }
+
+  state.editingProductId = id;
+  els.productForm.elements.name.value = product.name;
+  els.productForm.elements.category.value = product.category;
+  els.productForm.elements.price.value = product.price;
+  els.productForm.elements.stock.value = product.stock;
+  els.productForm.elements.description.value = product.description || "";
+  els.productImagesInput.value = "";
+  switchView("adminView");
+  renderAdmin();
+  els.productForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function cancelProductEdit() {
+  state.editingProductId = null;
+  els.productForm.reset();
+  renderAdmin();
+}
+
+async function deleteProduct(id) {
+  const product = state.products.find((item) => item.id === id);
+  if (!product || !confirm(`刪除商品「${product.name}」？`)) {
+    return;
+  }
+
+  state.products = state.products.filter((item) => item.id !== id);
+  await deleteRemoteItem("products", id);
+  await saveLocalData();
+  if (state.editingProductId === id) {
+    state.editingProductId = null;
+    els.productForm.reset();
+  }
   render();
 }
 
@@ -1328,7 +1413,7 @@ async function confirmDeathForCurrentUser() {
     return;
   }
 
-  if (!confirm("此操作會模擬受益人共同確認您已離世，並啟動緩衝期。")) {
+  if (!confirm("此操作會模擬繼承人共同確認您已離世，並啟動緩衝期。")) {
     return;
   }
 
@@ -1419,6 +1504,7 @@ function wireEvents() {
   });
   els.settingsForm.addEventListener("submit", saveSettings);
   els.productForm.addEventListener("submit", addProduct);
+  els.cancelProductEditButton.addEventListener("click", cancelProductEdit);
   els.confirmDeathButton.addEventListener("click", confirmDeathForCurrentUser);
 }
 
