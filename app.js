@@ -1,29 +1,83 @@
-const STORAGE_KEY = "timeCapsuleApp.capsules.v1";
+const STORAGE_KEY = "timeCapsulePlatform.v2";
+const FIREBASE_CONFIG = window.TIME_CAPSULE_FIREBASE_CONFIG || {};
+const FIREBASE_READY = Boolean(FIREBASE_CONFIG.apiKey && !String(FIREBASE_CONFIG.apiKey).startsWith("YOUR_"));
+
+const DEFAULT_SETTINGS = {
+  dailyLoginCoins: 10,
+  coinValueTwd: 10,
+  shippingFee: 80,
+  freeShippingThreshold: 1200,
+  notificationEmail: "admin@example.com",
+};
+
+const DEFAULT_PRODUCTS = [
+  {
+    id: "gift-card",
+    name: "時光祝福卡",
+    category: "紀念商品",
+    price: 180,
+    stock: 50,
+    description: "可放入時光寶盒的實體祝福卡，適合生日、畢業與紀念日。",
+  },
+  {
+    id: "memory-box",
+    name: "典藏木盒",
+    category: "收藏配件",
+    price: 980,
+    stock: 12,
+    description: "保存照片、信件與小物的紀念木盒。",
+  },
+  {
+    id: "legacy-kit",
+    name: "數位繼承整理包",
+    category: "數位服務",
+    price: 1280,
+    stock: 20,
+    description: "協助整理數位資產清單、繼承人資訊與重要訊息。",
+  },
+];
 
 const state = {
+  mode: FIREBASE_READY ? "firebase" : "local",
+  firebase: null,
+  user: null,
+  profile: null,
   capsules: [],
+  products: [],
+  settings: { ...DEFAULT_SETTINGS },
+  orders: [],
+  notifications: [],
+  inheritances: [],
+  cart: [],
   filter: "all",
   query: "",
+  category: "all",
   activeCapsuleId: null,
 };
 
 const els = {
-  form: document.querySelector("#capsuleForm"),
-  list: document.querySelector("#capsuleList"),
+  runtimeMode: document.querySelector("#runtimeMode"),
+  googleLoginButton: document.querySelector("#googleLoginButton"),
+  facebookLoginButton: document.querySelector("#facebookLoginButton"),
+  logoutButton: document.querySelector("#logoutButton"),
+  userChip: document.querySelector("#userChip"),
+  userAvatar: document.querySelector("#userAvatar"),
+  userName: document.querySelector("#userName"),
+  coinBalance: document.querySelector("#coinBalance"),
+  totalCount: document.querySelector("#totalCount"),
+  coinStat: document.querySelector("#coinStat"),
+  productCount: document.querySelector("#productCount"),
+  legacyCount: document.querySelector("#legacyCount"),
+  tabs: document.querySelectorAll("[data-view]"),
+  views: document.querySelectorAll(".view"),
+  capsuleForm: document.querySelector("#capsuleForm"),
+  capsuleList: document.querySelector("#capsuleList"),
   emptyState: document.querySelector("#emptyState"),
-  newCapsuleButton: document.querySelector("#newCapsuleButton"),
   emptyCreateButton: document.querySelector("#emptyCreateButton"),
-  closeComposerButton: document.querySelector("#closeComposerButton"),
-  composerPanel: document.querySelector("#composerPanel"),
-  exportButton: document.querySelector("#exportButton"),
-  importFile: document.querySelector("#importFile"),
   searchInput: document.querySelector("#searchInput"),
   filterButtons: document.querySelectorAll("[data-filter]"),
-  totalCount: document.querySelector("#totalCount"),
-  lockedCount: document.querySelector("#lockedCount"),
-  readyCount: document.querySelector("#readyCount"),
-  openedCount: document.querySelector("#openedCount"),
-  template: document.querySelector("#capsuleTemplate"),
+  capsuleTemplate: document.querySelector("#capsuleTemplate"),
+  unlockInput: document.querySelector("#unlockInput"),
   unlockDialog: document.querySelector("#unlockDialog"),
   unlockForm: document.querySelector("#unlockForm"),
   dialogTitle: document.querySelector("#dialogTitle"),
@@ -33,11 +87,41 @@ const els = {
   unlockError: document.querySelector("#unlockError"),
   revealedMessage: document.querySelector("#revealedMessage"),
   confirmUnlockButton: document.querySelector("#confirmUnlockButton"),
-  unlockInput: document.querySelector("#unlockInput"),
+  categoryFilter: document.querySelector("#categoryFilter"),
+  productGrid: document.querySelector("#productGrid"),
+  cartItems: document.querySelector("#cartItems"),
+  cartCount: document.querySelector("#cartCount"),
+  cartSubtotal: document.querySelector("#cartSubtotal"),
+  coinDiscount: document.querySelector("#coinDiscount"),
+  shippingFee: document.querySelector("#shippingFee"),
+  cartTotal: document.querySelector("#cartTotal"),
+  useCoinsInput: document.querySelector("#useCoinsInput"),
+  checkoutButton: document.querySelector("#checkoutButton"),
+  legacyForm: document.querySelector("#legacyForm"),
+  legacyList: document.querySelector("#legacyList"),
+  releaseModeInput: document.querySelector("#releaseModeInput"),
+  releaseDateLabel: document.querySelector("#releaseDateLabel"),
+  releaseDateInput: document.querySelector("#releaseDateInput"),
+  settingsForm: document.querySelector("#settingsForm"),
+  productForm: document.querySelector("#productForm"),
+  adminTimeline: document.querySelector("#adminTimeline"),
+  confirmDeathButton: document.querySelector("#confirmDeathButton"),
 };
 
 function uid() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function money(value) {
+  return new Intl.NumberFormat("zh-TW", {
+    style: "currency",
+    currency: "TWD",
+    maximumFractionDigits: 0,
+  }).format(Math.max(0, Number(value) || 0));
 }
 
 function toLocalInputValue(date = new Date()) {
@@ -55,17 +139,22 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function parseList(value) {
+  return String(value || "")
+    .split(/[,\n，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function getCapsuleStatus(capsule) {
   if (capsule.openedAt) {
     return "opened";
   }
-
   return new Date(capsule.unlockAt).getTime() <= Date.now() ? "ready" : "locked";
 }
 
 function getCountdownText(unlockAt) {
   const diff = new Date(unlockAt).getTime() - Date.now();
-
   if (diff <= 0) {
     return "可開啟";
   }
@@ -78,37 +167,308 @@ function getCountdownText(unlockAt) {
   if (days > 0) {
     return `${days} 天 ${hours} 小時`;
   }
-
   if (hours > 0) {
     return `${hours} 小時 ${mins} 分`;
   }
-
   return `${mins} 分`;
 }
 
-function loadCapsules() {
+function readLocalStore() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    state.capsules = raw ? JSON.parse(raw) : [];
+    const data = raw ? JSON.parse(raw) : {};
+    return {
+      users: data.users || {},
+      settings: { ...DEFAULT_SETTINGS, ...(data.settings || {}) },
+      products: data.products?.length ? data.products : DEFAULT_PRODUCTS,
+      orders: data.orders || [],
+      notifications: data.notifications || [],
+    };
   } catch {
-    state.capsules = [];
+    return {
+      users: {},
+      settings: { ...DEFAULT_SETTINGS },
+      products: DEFAULT_PRODUCTS,
+      orders: [],
+      notifications: [],
+    };
   }
 }
 
-function saveCapsules() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.capsules));
+function writeLocalStore(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function getUserBucket(store = readLocalStore()) {
+  if (!state.user) {
+    return null;
+  }
+
+  store.users[state.user.uid] ||= {
+    profile: {
+      uid: state.user.uid,
+      displayName: state.user.displayName,
+      email: state.user.email,
+      coins: 0,
+      lastLoginAwardDate: null,
+      createdAt: new Date().toISOString(),
+    },
+    capsules: [],
+    inheritances: [],
+  };
+
+  return store.users[state.user.uid];
+}
+
+async function initFirebase() {
+  if (!FIREBASE_READY) {
+    return;
+  }
+
+  const [{ initializeApp }, authModule, firestoreModule] = await Promise.all([
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js"),
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js"),
+    import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js"),
+  ]);
+
+  const app = initializeApp(FIREBASE_CONFIG);
+  const auth = authModule.getAuth(app);
+  const db = firestoreModule.getFirestore(app);
+  state.firebase = { auth, db, ...authModule, ...firestoreModule };
+}
+
+async function loadData() {
+  if (state.mode === "firebase" && state.firebase && state.user) {
+    await loadFirebaseData();
+    return;
+  }
+
+  const store = readLocalStore();
+  state.settings = store.settings;
+  state.products = store.products;
+  state.orders = store.orders.filter((order) => order.userId === state.user?.uid);
+  state.notifications = store.notifications;
+
+  const bucket = getUserBucket(store);
+  state.profile = bucket?.profile || null;
+  state.capsules = bucket?.capsules || [];
+  state.inheritances = bucket?.inheritances || [];
+}
+
+async function loadFirebaseData() {
+  const fb = state.firebase;
+  const userRef = fb.doc(fb.db, "users", state.user.uid);
+  const settingsRef = fb.doc(fb.db, "platform", "settings");
+  const [profileSnap, settingsSnap, productSnap, capsuleSnap, inheritanceSnap, orderSnap, notificationSnap] =
+    await Promise.all([
+      fb.getDoc(userRef),
+      fb.getDoc(settingsRef),
+      fb.getDocs(fb.collection(fb.db, "products")),
+      fb.getDocs(fb.collection(fb.db, "users", state.user.uid, "capsules")),
+      fb.getDocs(fb.collection(fb.db, "users", state.user.uid, "inheritances")),
+      fb.getDocs(fb.query(fb.collection(fb.db, "orders"), fb.where("userId", "==", state.user.uid))),
+      fb.getDocs(fb.collection(fb.db, "notifications")),
+    ]);
+
+  state.profile = profileSnap.exists()
+    ? profileSnap.data()
+    : {
+        uid: state.user.uid,
+        displayName: state.user.displayName,
+        email: state.user.email,
+        coins: 0,
+        lastLoginAwardDate: null,
+        createdAt: new Date().toISOString(),
+      };
+  state.settings = settingsSnap.exists() ? { ...DEFAULT_SETTINGS, ...settingsSnap.data() } : { ...DEFAULT_SETTINGS };
+  state.products = productSnap.empty ? DEFAULT_PRODUCTS : productSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  state.capsules = capsuleSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  state.inheritances = inheritanceSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  state.orders = orderSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  state.notifications = notificationSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+  await fb.setDoc(userRef, state.profile, { merge: true });
+  if (!settingsSnap.exists()) {
+    await fb.setDoc(settingsRef, state.settings, { merge: true });
+  }
+}
+
+async function saveLocalData() {
+  const store = readLocalStore();
+  store.settings = state.settings;
+  store.products = state.products;
+  store.orders = [
+    ...store.orders.filter((order) => order.userId !== state.user?.uid),
+    ...state.orders,
+  ];
+  store.notifications = state.notifications;
+
+  const bucket = getUserBucket(store);
+  if (bucket) {
+    bucket.profile = state.profile;
+    bucket.capsules = state.capsules;
+    bucket.inheritances = state.inheritances;
+  }
+
+  writeLocalStore(store);
+}
+
+async function persistCollectionItem(collectionName, item) {
+  if (state.mode === "firebase" && state.firebase && state.user) {
+    const fb = state.firebase;
+    if (collectionName === "capsules") {
+      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "capsules", item.id), item, { merge: true });
+    } else if (collectionName === "inheritances") {
+      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "inheritances", item.id), item, { merge: true });
+    } else if (collectionName === "products") {
+      await fb.setDoc(fb.doc(fb.db, "products", item.id), item, { merge: true });
+    } else if (collectionName === "orders") {
+      await fb.setDoc(fb.doc(fb.db, "orders", item.id), item, { merge: true });
+    } else if (collectionName === "notifications") {
+      await fb.setDoc(fb.doc(fb.db, "notifications", item.id), item, { merge: true });
+    }
+    await fb.setDoc(fb.doc(fb.db, "users", state.user.uid), state.profile, { merge: true });
+    await fb.setDoc(fb.doc(fb.db, "platform", "settings"), state.settings, { merge: true });
+    return;
+  }
+
+  await saveLocalData();
+}
+
+async function persistAll() {
+  if (state.mode === "firebase" && state.firebase && state.user) {
+    const fb = state.firebase;
+    await fb.setDoc(fb.doc(fb.db, "users", state.user.uid), state.profile, { merge: true });
+    await fb.setDoc(fb.doc(fb.db, "platform", "settings"), state.settings, { merge: true });
+    for (const capsule of state.capsules) {
+      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "capsules", capsule.id), capsule, { merge: true });
+    }
+    for (const inheritance of state.inheritances) {
+      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "inheritances", inheritance.id), inheritance, { merge: true });
+    }
+    for (const product of state.products) {
+      await fb.setDoc(fb.doc(fb.db, "products", product.id), product, { merge: true });
+    }
+    for (const order of state.orders) {
+      await fb.setDoc(fb.doc(fb.db, "orders", order.id), order, { merge: true });
+    }
+    for (const notification of state.notifications) {
+      await fb.setDoc(fb.doc(fb.db, "notifications", notification.id), notification, { merge: true });
+    }
+    return;
+  }
+  await saveLocalData();
+}
+
+async function deleteRemoteItem(collectionName, id) {
+  if (!(state.mode === "firebase" && state.firebase && state.user)) {
+    return;
+  }
+
+  const fb = state.firebase;
+  if (collectionName === "capsules") {
+    await fb.deleteDoc(fb.doc(fb.db, "users", state.user.uid, "capsules", id));
+  } else if (collectionName === "inheritances") {
+    await fb.deleteDoc(fb.doc(fb.db, "users", state.user.uid, "inheritances", id));
+  } else if (collectionName === "products") {
+    await fb.deleteDoc(fb.doc(fb.db, "products", id));
+  }
+}
+
+async function login(provider) {
+  if (FIREBASE_READY && state.firebase) {
+    const fb = state.firebase;
+    const authProvider = provider === "google" ? new fb.GoogleAuthProvider() : new fb.FacebookAuthProvider();
+    await fb.signInWithPopup(fb.auth, authProvider);
+    return;
+  }
+
+  state.user = {
+    uid: `demo-${provider}`,
+    displayName: provider === "google" ? "Google 示範會員" : "Facebook 示範會員",
+    email: `${provider}@demo.local`,
+    provider,
+  };
+  await loadData();
+  await awardDailyLoginCoins();
+  render();
+}
+
+async function logout() {
+  if (state.mode === "firebase" && state.firebase) {
+    await state.firebase.signOut(state.firebase.auth);
+  }
+  state.user = null;
+  state.profile = null;
+  state.capsules = [];
+  state.inheritances = [];
+  state.orders = [];
+  state.cart = [];
+  render();
+}
+
+async function awardDailyLoginCoins() {
+  if (!state.profile) {
+    return;
+  }
+
+  const today = todayKey();
+  if (state.profile.lastLoginAwardDate === today) {
+    return;
+  }
+
+  const amount = Number(state.settings.dailyLoginCoins) || 0;
+  state.profile.coins = (Number(state.profile.coins) || 0) + amount;
+  state.profile.lastLoginAwardDate = today;
+  state.profile.lastLoginAwardAmount = amount;
+  state.notifications.unshift({
+    id: uid(),
+    type: "coin",
+    userId: state.user.uid,
+    message: `每日登入獎勵已發放 ${amount} 枚時光幣。`,
+    createdAt: new Date().toISOString(),
+  });
+  await persistAll();
+}
+
+function requireLogin() {
+  if (state.user) {
+    return true;
+  }
+  alert("請先使用 Google 或 Facebook 登入。");
+  return false;
+}
+
+function renderAuth() {
+  const signedIn = Boolean(state.user);
+  els.userChip.hidden = !signedIn;
+  els.logoutButton.hidden = !signedIn;
+  els.googleLoginButton.hidden = signedIn;
+  els.facebookLoginButton.hidden = signedIn;
+  els.userName.textContent = state.profile?.displayName || state.user?.displayName || "訪客";
+  els.userAvatar.textContent = (state.profile?.displayName || "時").slice(0, 1);
+  els.coinBalance.textContent = state.profile?.coins || 0;
+  els.runtimeMode.textContent =
+    state.mode === "firebase"
+      ? "目前使用 Firebase Authentication / Firestore 雲端模式。"
+      : "目前使用本機示範模式；填入 Firebase 設定後可啟用正式 Google / Facebook 登入與雲端資料。";
+}
+
+function renderStats() {
+  els.totalCount.textContent = state.capsules.length;
+  els.coinStat.textContent = state.profile?.coins || 0;
+  els.productCount.textContent = state.products.length;
+  els.legacyCount.textContent = state.inheritances.length;
 }
 
 function getFilteredCapsules() {
   const query = state.query.trim().toLowerCase();
-
   return state.capsules
     .filter((capsule) => state.filter === "all" || getCapsuleStatus(capsule) === state.filter)
     .filter((capsule) => {
       if (!query) {
         return true;
       }
-
       return [capsule.title, capsule.recipient, capsule.message, capsule.mood]
         .join(" ")
         .toLowerCase()
@@ -117,33 +477,18 @@ function getFilteredCapsules() {
     .sort((a, b) => new Date(a.unlockAt).getTime() - new Date(b.unlockAt).getTime());
 }
 
-function updateStats() {
-  const statusCounts = state.capsules.reduce(
-    (counts, capsule) => {
-      counts[getCapsuleStatus(capsule)] += 1;
-      return counts;
-    },
-    { locked: 0, ready: 0, opened: 0 },
-  );
-
-  els.totalCount.textContent = state.capsules.length;
-  els.lockedCount.textContent = statusCounts.locked;
-  els.readyCount.textContent = statusCounts.ready;
-  els.openedCount.textContent = statusCounts.opened;
-}
-
 function renderCapsules() {
   const capsules = getFilteredCapsules();
-  els.list.replaceChildren();
+  els.capsuleList.replaceChildren();
   els.emptyState.hidden = capsules.length !== 0;
-  els.list.hidden = capsules.length === 0;
+  els.capsuleList.hidden = capsules.length === 0;
   els.emptyState.querySelector("h2").textContent =
     state.capsules.length === 0 ? "尚未建立寶盒" : "沒有符合的寶盒";
   els.emptyCreateButton.hidden = state.capsules.length !== 0;
 
   capsules.forEach((capsule) => {
     const status = getCapsuleStatus(capsule);
-    const fragment = els.template.content.cloneNode(true);
+    const fragment = els.capsuleTemplate.content.cloneNode(true);
     const card = fragment.querySelector(".capsule-card");
     const statusPill = fragment.querySelector(".status-pill");
     const openButton = fragment.querySelector(".open-button");
@@ -159,25 +504,203 @@ function renderCapsules() {
     statusPill.classList.add(status);
     statusPill.textContent =
       status === "opened" ? "已開啟" : status === "ready" ? "可開啟" : getCountdownText(capsule.unlockAt);
-
     openButton.textContent = status === "locked" ? "查看倒數" : "開啟";
     openButton.addEventListener("click", () => showCapsuleDialog(capsule.id));
     fragment.querySelector(".delete-button").addEventListener("click", () => deleteCapsule(capsule.id));
-
-    els.list.append(fragment);
+    els.capsuleList.append(fragment);
   });
+}
 
-  updateStats();
+function renderShop() {
+  const categories = ["all", ...new Set(state.products.map((product) => product.category))];
+  els.categoryFilter.replaceChildren(
+    ...categories.map((category) => {
+      const option = document.createElement("option");
+      option.value = category;
+      option.textContent = category === "all" ? "全部分類" : category;
+      option.selected = state.category === category;
+      return option;
+    }),
+  );
+
+  const products =
+    state.category === "all"
+      ? state.products
+      : state.products.filter((product) => product.category === state.category);
+
+  els.productGrid.replaceChildren(
+    ...products.map((product) => {
+      const card = document.createElement("article");
+      card.className = "product-card";
+      card.innerHTML = `
+        <div class="product-art">${product.name.slice(0, 1)}</div>
+        <div class="product-body">
+          <span class="mood-tag">${product.category}</span>
+          <h2>${escapeHtml(product.name)}</h2>
+          <p>${escapeHtml(product.description || "")}</p>
+          <div class="product-meta">
+            <strong>${money(product.price)}</strong>
+            <span>庫存 ${product.stock}</span>
+          </div>
+        </div>
+      `;
+      const button = document.createElement("button");
+      button.className = "primary-button";
+      button.type = "button";
+      button.textContent = "加入購物車";
+      button.disabled = Number(product.stock) <= 0;
+      button.addEventListener("click", () => addToCart(product.id));
+      card.querySelector(".product-body").append(button);
+      return card;
+    }),
+  );
+
+  renderCart();
+}
+
+function renderCart() {
+  const subtotal = state.cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const maxCoins = Math.min(
+    Number(state.profile?.coins) || 0,
+    Math.floor(subtotal / Math.max(1, Number(state.settings.coinValueTwd) || 1)),
+  );
+  const requestedCoins = Math.min(maxCoins, Math.max(0, Number(els.useCoinsInput.value) || 0));
+  els.useCoinsInput.max = String(maxCoins);
+  els.useCoinsInput.value = String(requestedCoins);
+
+  const coinDiscount = requestedCoins * (Number(state.settings.coinValueTwd) || 0);
+  const shipping =
+    subtotal === 0 || subtotal >= Number(state.settings.freeShippingThreshold)
+      ? 0
+      : Number(state.settings.shippingFee) || 0;
+  const total = Math.max(0, subtotal - coinDiscount + shipping);
+
+  els.cartItems.replaceChildren(
+    ...state.cart.map((item) => {
+      const row = document.createElement("div");
+      row.className = "cart-row";
+      row.innerHTML = `
+        <div>
+          <strong>${escapeHtml(item.name)}</strong>
+          <span>${money(item.price)} × ${item.qty}</span>
+        </div>
+      `;
+      const remove = document.createElement("button");
+      remove.className = "ghost-icon";
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.addEventListener("click", () => removeFromCart(item.id));
+      row.append(remove);
+      return row;
+    }),
+  );
+
+  els.cartCount.textContent = `${state.cart.reduce((sum, item) => sum + item.qty, 0)} 件`;
+  els.cartSubtotal.textContent = money(subtotal);
+  els.coinDiscount.textContent = `-${money(coinDiscount)}`;
+  els.shippingFee.textContent = money(shipping);
+  els.cartTotal.textContent = money(total);
+}
+
+function renderLegacy() {
+  els.legacyList.replaceChildren(
+    ...state.inheritances.map((item) => {
+      const status = getLegacyStatus(item);
+      const card = document.createElement("article");
+      card.className = "capsule-card";
+      card.dataset.tone = status === "released" ? "mint" : item.releaseMode === "death" ? "coral" : "amber";
+      card.innerHTML = `
+        <div class="capsule-card-top">
+          <span class="status-pill ${status === "released" ? "ready" : "locked"}">${status === "released" ? "可開啟" : "封存中"}</span>
+          <button class="ghost-icon delete-button" type="button" title="刪除" aria-label="刪除">×</button>
+        </div>
+        <h2>${escapeHtml(item.title)}</h2>
+        <p class="capsule-preview">${escapeHtml(item.message)}</p>
+        <dl class="capsule-meta">
+          <div><dt>繼承人</dt><dd>${item.heirs.map((heir) => escapeHtml(heir.name)).join("、")}</dd></div>
+          <div><dt>條件</dt><dd>${item.releaseMode === "death" ? "確認過世後" : item.releaseDate}</dd></div>
+        </dl>
+        <div class="capsule-card-bottom">
+          <span class="mood-tag">${item.heirs.length} 位繼承人</span>
+          <button class="secondary-button release-button" type="button">${status === "released" ? "查看訊息" : "尚未可開啟"}</button>
+        </div>
+      `;
+      card.querySelector(".delete-button").addEventListener("click", () => deleteInheritance(item.id));
+      card.querySelector(".release-button").addEventListener("click", () => {
+        if (getLegacyStatus(item) === "released") {
+          alert(item.message);
+        }
+      });
+      return card;
+    }),
+  );
+}
+
+function renderAdmin() {
+  for (const [key, value] of Object.entries(state.settings)) {
+    const field = els.settingsForm.elements[key];
+    if (field) {
+      field.value = value;
+    }
+  }
+
+  const items = [
+    ...state.orders.map((order) => ({
+      type: "訂單",
+      title: `訂單 ${order.id.slice(0, 8)}：${money(order.total)}`,
+      body: `使用 ${order.usedCoins} 枚時光幣，狀態：${order.status}`,
+      date: order.createdAt,
+    })),
+    ...state.notifications.map((note) => ({
+      type: "通知",
+      title: note.message,
+      body: note.type,
+      date: note.createdAt,
+    })),
+  ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  els.adminTimeline.replaceChildren(
+    ...(items.length
+      ? items.map((item) => {
+          const row = document.createElement("article");
+          row.className = "timeline-item";
+          row.innerHTML = `
+            <span class="mood-tag">${item.type}</span>
+            <h3>${escapeHtml(item.title)}</h3>
+            <p>${escapeHtml(item.body)}</p>
+            <time>${formatDateTime(item.date)}</time>
+          `;
+          return row;
+        })
+      : [Object.assign(document.createElement("p"), { className: "hint", textContent: "尚無訂單或通知。" })]),
+  );
+}
+
+function render() {
+  renderAuth();
+  renderStats();
+  renderCapsules();
+  renderShop();
+  renderLegacy();
+  renderAdmin();
 }
 
 function resetFormDefaults() {
   const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
   els.unlockInput.min = toLocalInputValue(new Date());
   els.unlockInput.value = toLocalInputValue(tomorrow);
+  els.releaseDateInput.min = todayKey();
+  els.releaseDateInput.value = todayKey();
 }
 
-function createCapsule(formData) {
-  return {
+async function addCapsule(event) {
+  event.preventDefault();
+  if (!requireLogin()) {
+    return;
+  }
+
+  const formData = new FormData(els.capsuleForm);
+  const capsule = {
     id: uid(),
     title: formData.get("title").trim(),
     recipient: formData.get("recipient").trim(),
@@ -189,38 +712,22 @@ function createCapsule(formData) {
     createdAt: new Date().toISOString(),
     openedAt: null,
   };
-}
-
-function addCapsule(event) {
-  event.preventDefault();
-  const formData = new FormData(els.form);
-  const capsule = createCapsule(formData);
-
-  if (!capsule.title || !capsule.message || Number.isNaN(new Date(capsule.unlockAt).getTime())) {
-    return;
-  }
 
   state.capsules.push(capsule);
-  saveCapsules();
-  els.form.reset();
+  await persistCollectionItem("capsules", capsule);
+  els.capsuleForm.reset();
   resetFormDefaults();
-  renderCapsules();
+  render();
 }
 
-function deleteCapsule(id) {
-  const capsule = state.capsules.find((item) => item.id === id);
-  if (!capsule) {
+async function deleteCapsule(id) {
+  if (!confirm("刪除此寶盒？")) {
     return;
   }
-
-  const confirmed = window.confirm(`刪除「${capsule.title}」？`);
-  if (!confirmed) {
-    return;
-  }
-
   state.capsules = state.capsules.filter((item) => item.id !== id);
-  saveCapsules();
-  renderCapsules();
+  await deleteRemoteItem("capsules", id);
+  await saveLocalData();
+  render();
 }
 
 function showCapsuleDialog(id) {
@@ -259,13 +766,9 @@ function revealCapsule(capsule) {
   els.revealedMessage.hidden = false;
 }
 
-function confirmUnlock() {
+async function confirmUnlock() {
   const capsule = state.capsules.find((item) => item.id === state.activeCapsuleId);
-  if (!capsule) {
-    return;
-  }
-
-  if (getCapsuleStatus(capsule) === "locked") {
+  if (!capsule || getCapsuleStatus(capsule) === "locked") {
     return;
   }
 
@@ -276,77 +779,219 @@ function confirmUnlock() {
   }
 
   capsule.openedAt = capsule.openedAt ?? new Date().toISOString();
-  saveCapsules();
+  await persistCollectionItem("capsules", capsule);
   revealCapsule(capsule);
-  renderCapsules();
+  render();
 }
 
-function exportCapsules() {
-  const payload = {
-    app: "time-capsule-web",
-    exportedAt: new Date().toISOString(),
-    capsules: state.capsules,
-  };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `time-capsules-${new Date().toISOString().slice(0, 10)}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-function normalizeImportedCapsule(capsule) {
-  return {
-    id: capsule.id || uid(),
-    title: String(capsule.title || "未命名寶盒").slice(0, 60),
-    recipient: String(capsule.recipient || "").slice(0, 40),
-    unlockAt: new Date(capsule.unlockAt || Date.now()).toISOString(),
-    mood: String(capsule.mood || "紀念").slice(0, 20),
-    secret: String(capsule.secret || "").slice(0, 40),
-    message: String(capsule.message || "").slice(0, 1200),
-    tone: ["mint", "coral", "amber"].includes(capsule.tone) ? capsule.tone : "mint",
-    createdAt: capsule.createdAt || new Date().toISOString(),
-    openedAt: capsule.openedAt || null,
-  };
-}
-
-async function importCapsules(event) {
-  const [file] = event.target.files;
-  if (!file) {
+function addToCart(productId) {
+  if (!requireLogin()) {
     return;
   }
 
-  try {
-    const data = JSON.parse(await file.text());
-    const capsules = Array.isArray(data) ? data : data.capsules;
-    if (!Array.isArray(capsules)) {
-      throw new Error("Invalid backup");
-    }
-
-    const imported = capsules.map(normalizeImportedCapsule);
-    const existingIds = new Set(state.capsules.map((capsule) => capsule.id));
-    state.capsules = [
-      ...state.capsules,
-      ...imported.map((capsule) => (existingIds.has(capsule.id) ? { ...capsule, id: uid() } : capsule)),
-    ];
-    saveCapsules();
-    renderCapsules();
-  } catch {
-    window.alert("備份檔格式不正確");
-  } finally {
-    event.target.value = "";
+  const product = state.products.find((item) => item.id === productId);
+  if (!product || Number(product.stock) <= 0) {
+    return;
   }
+
+  const existing = state.cart.find((item) => item.id === productId);
+  if (existing) {
+    existing.qty += 1;
+  } else {
+    state.cart.push({ id: product.id, name: product.name, price: Number(product.price), qty: 1 });
+  }
+  renderCart();
+}
+
+function removeFromCart(productId) {
+  state.cart = state.cart.filter((item) => item.id !== productId);
+  renderCart();
+}
+
+async function checkout() {
+  if (!requireLogin() || state.cart.length === 0) {
+    return;
+  }
+
+  const subtotal = state.cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const maxCoins = Math.min(
+    Number(state.profile.coins) || 0,
+    Math.floor(subtotal / Math.max(1, Number(state.settings.coinValueTwd) || 1)),
+  );
+  const usedCoins = Math.min(maxCoins, Math.max(0, Number(els.useCoinsInput.value) || 0));
+  const discount = usedCoins * (Number(state.settings.coinValueTwd) || 0);
+  const shipping =
+    subtotal >= Number(state.settings.freeShippingThreshold) ? 0 : Number(state.settings.shippingFee) || 0;
+  const total = Math.max(0, subtotal - discount + shipping);
+
+  const order = {
+    id: uid(),
+    userId: state.user.uid,
+    items: state.cart,
+    subtotal,
+    usedCoins,
+    discount,
+    shipping,
+    total,
+    status: "created",
+    notificationEmail: state.settings.notificationEmail,
+    createdAt: new Date().toISOString(),
+  };
+
+  state.profile.coins = Math.max(0, (Number(state.profile.coins) || 0) - usedCoins);
+  state.orders.unshift(order);
+  state.notifications.unshift({
+    id: uid(),
+    type: "order",
+    userId: state.user.uid,
+    message: `新訂單已建立，通知對象：${state.settings.notificationEmail}`,
+    createdAt: new Date().toISOString(),
+  });
+  state.cart = [];
+  await persistCollectionItem("orders", order);
+  await persistAll();
+  render();
+  alert("訂單已建立。");
+}
+
+async function addInheritance(event) {
+  event.preventDefault();
+  if (!requireLogin()) {
+    return;
+  }
+
+  const formData = new FormData(els.legacyForm);
+  const names = parseList(formData.get("heirNames"));
+  const emails = parseList(formData.get("heirEmails"));
+  const heirs = names.map((name, index) => ({
+    name,
+    email: emails[index] || emails[0] || "",
+  }));
+
+  const inheritance = {
+    id: uid(),
+    title: formData.get("title").trim(),
+    heirs,
+    releaseMode: formData.get("releaseMode"),
+    releaseDate: formData.get("releaseDate") || todayKey(),
+    message: formData.get("message").trim(),
+    deathConfirmedAt: null,
+    createdAt: new Date().toISOString(),
+  };
+
+  state.inheritances.unshift(inheritance);
+  state.notifications.unshift({
+    id: uid(),
+    type: "legacy",
+    userId: state.user.uid,
+    message: `已建立「${inheritance.title}」數位繼承設定，繼承人 ${heirs.length} 位。`,
+    createdAt: new Date().toISOString(),
+  });
+  await persistCollectionItem("inheritances", inheritance);
+  await persistAll();
+  els.legacyForm.reset();
+  resetFormDefaults();
+  render();
+}
+
+function getLegacyStatus(item) {
+  if (item.releaseMode === "date") {
+    return new Date(`${item.releaseDate}T00:00:00`).getTime() <= Date.now() ? "released" : "locked";
+  }
+  return item.deathConfirmedAt ? "released" : "locked";
+}
+
+async function deleteInheritance(id) {
+  if (!confirm("刪除此數位繼承設定？")) {
+    return;
+  }
+  state.inheritances = state.inheritances.filter((item) => item.id !== id);
+  await deleteRemoteItem("inheritances", id);
+  await saveLocalData();
+  render();
+}
+
+async function saveSettings(event) {
+  event.preventDefault();
+  const formData = new FormData(els.settingsForm);
+  state.settings = {
+    dailyLoginCoins: Number(formData.get("dailyLoginCoins")) || 0,
+    coinValueTwd: Number(formData.get("coinValueTwd")) || 0,
+    shippingFee: Number(formData.get("shippingFee")) || 0,
+    freeShippingThreshold: Number(formData.get("freeShippingThreshold")) || 0,
+    notificationEmail: formData.get("notificationEmail").trim(),
+  };
+  await persistAll();
+  render();
+  alert("設定已儲存。");
+}
+
+async function addProduct(event) {
+  event.preventDefault();
+  const formData = new FormData(els.productForm);
+  const product = {
+    id: uid(),
+    name: formData.get("name").trim(),
+    category: formData.get("category").trim(),
+    price: Number(formData.get("price")) || 0,
+    stock: Number(formData.get("stock")) || 0,
+    description: formData.get("description").trim(),
+    createdAt: new Date().toISOString(),
+  };
+  state.products.unshift(product);
+  await persistCollectionItem("products", product);
+  els.productForm.reset();
+  render();
+}
+
+async function confirmDeathForCurrentUser() {
+  if (!requireLogin()) {
+    return;
+  }
+
+  if (!confirm("此操作代表人工審核已確認目前用戶過世，將釋放死亡條件的數位繼承訊息。")) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  state.inheritances
+    .filter((item) => item.releaseMode === "death" && !item.deathConfirmedAt)
+    .forEach((item) => {
+      item.deathConfirmedAt = now;
+      state.notifications.unshift({
+        id: uid(),
+        type: "legacy-release",
+        userId: state.user.uid,
+        message: `「${item.title}」已因人工確認過世流程而可開啟。`,
+        createdAt: now,
+      });
+    });
+  await persistAll();
+  render();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function switchView(viewId) {
+  els.tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.view === viewId));
+  els.views.forEach((view) => view.classList.toggle("active", view.id === viewId));
 }
 
 function wireEvents() {
-  els.form.addEventListener("submit", addCapsule);
-  els.form.addEventListener("reset", () => window.setTimeout(resetFormDefaults, 0));
-  els.newCapsuleButton.addEventListener("click", () => els.composerPanel.scrollIntoView({ behavior: "smooth" }));
-  els.emptyCreateButton.addEventListener("click", () => els.composerPanel.scrollIntoView({ behavior: "smooth" }));
-  els.closeComposerButton.addEventListener("click", () => els.composerPanel.classList.toggle("is-collapsed"));
-  els.exportButton.addEventListener("click", exportCapsules);
-  els.importFile.addEventListener("change", importCapsules);
+  els.googleLoginButton.addEventListener("click", () => login("google"));
+  els.facebookLoginButton.addEventListener("click", () => login("facebook"));
+  els.logoutButton.addEventListener("click", logout);
+  els.tabs.forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.view)));
+  els.capsuleForm.addEventListener("submit", addCapsule);
+  els.capsuleForm.addEventListener("reset", () => window.setTimeout(resetFormDefaults, 0));
+  els.emptyCreateButton.addEventListener("click", () => document.querySelector(".composer-panel").scrollIntoView({ behavior: "smooth" }));
   els.confirmUnlockButton.addEventListener("click", confirmUnlock);
   els.searchInput.addEventListener("input", (event) => {
     state.query = event.target.value;
@@ -359,18 +1004,51 @@ function wireEvents() {
       renderCapsules();
     });
   });
+  els.categoryFilter.addEventListener("change", (event) => {
+    state.category = event.target.value;
+    renderShop();
+  });
+  els.useCoinsInput.addEventListener("input", renderCart);
+  els.checkoutButton.addEventListener("click", checkout);
+  els.legacyForm.addEventListener("submit", addInheritance);
+  els.releaseModeInput.addEventListener("change", () => {
+    els.releaseDateLabel.hidden = els.releaseModeInput.value === "death";
+  });
+  els.settingsForm.addEventListener("submit", saveSettings);
+  els.productForm.addEventListener("submit", addProduct);
+  els.confirmDeathButton.addEventListener("click", confirmDeathForCurrentUser);
 }
 
-function startCountdownRefresh() {
+async function start() {
+  resetFormDefaults();
+  wireEvents();
+
+  if (FIREBASE_READY) {
+    await initFirebase();
+    state.firebase.onAuthStateChanged(state.firebase.auth, async (user) => {
+      state.user = user
+        ? {
+            uid: user.uid,
+            displayName: user.displayName || user.email || "會員",
+            email: user.email || "",
+            provider: user.providerData?.[0]?.providerId || "firebase",
+          }
+        : null;
+      if (state.user) {
+        await loadData();
+        await awardDailyLoginCoins();
+      }
+      render();
+    });
+  } else {
+    await loadData();
+    render();
+  }
+
   window.setInterval(renderCapsules, 60000);
 }
 
-function init() {
-  loadCapsules();
-  resetFormDefaults();
-  wireEvents();
-  renderCapsules();
-  startCountdownRefresh();
-}
-
-init();
+start().catch((error) => {
+  console.error(error);
+  els.runtimeMode.textContent = "初始化失敗，請檢查 Firebase 設定或瀏覽器主控台錯誤。";
+});
