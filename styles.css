@@ -35,6 +35,14 @@ textarea {
   font: inherit;
 }
 
+input:disabled,
+select:disabled,
+textarea:disabled {
+  color: var(--muted);
+  background: #ece6dc;
+  cursor: not-allowed;
+}
+
 button {
   cursor: pointer;
 }
