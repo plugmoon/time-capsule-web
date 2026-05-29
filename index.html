@@ -25,6 +25,7 @@
             <span id="userName">訪客</span>
             <strong><span id="coinBalance">0</span> 幣</strong>
           </div>
+          <button class="primary-button" id="checkInButton" type="button" hidden>立即簽到</button>
           <button class="secondary-button" id="googleLoginButton" type="button">Google 登入</button>
           <button class="secondary-button" id="facebookLoginButton" type="button">Facebook 登入</button>
           <button class="icon-button" id="logoutButton" type="button" title="登出" aria-label="登出" hidden>↪</button>
@@ -87,6 +88,24 @@
                   <input id="unlockInput" name="unlockAt" type="datetime-local" required />
                 </label>
                 <label>
+                  <span>指定受益人</span>
+                  <select id="capsuleBeneficiaryInput" name="beneficiaryIds" multiple size="4"></select>
+                </label>
+                <label>
+                  <span>開啟條件</span>
+                  <select id="capsuleReleaseModeInput" name="releaseMode">
+                    <option value="date">指定日期</option>
+                    <option value="death">在我離世後</option>
+                  </select>
+                </label>
+                <div class="death-rule-group" id="capsuleDeathRuleGroup" hidden>
+                  <label>
+                    <span>需共同確認離世的受益人人數</span>
+                    <input name="requiredConfirmations" type="number" min="1" step="1" value="1" />
+                  </label>
+                  <p class="hint">確認人數不可超過此寶盒指定的受益人人數。</p>
+                </div>
+                <label>
                   <span>心情標籤</span>
                   <select id="moodInput" name="mood">
                     <option value="期待">期待</option>
@@ -101,8 +120,20 @@
                   <input id="secretInput" name="secret" type="password" maxlength="40" autocomplete="new-password" placeholder="可留空" />
                 </label>
                 <label class="message-field">
-                  <span>內容</span>
+                  <span>文字內容</span>
                   <textarea id="messageInput" name="message" rows="8" maxlength="1200" required placeholder="把想留給未來的話寫下來。"></textarea>
+                </label>
+                <label>
+                  <span>圖片附件，單張不超過 10M</span>
+                  <input id="capsuleImageInput" name="imageFiles" type="file" accept="image/*" multiple />
+                </label>
+                <label>
+                  <span>影片連結</span>
+                  <input name="videoUrl" type="url" placeholder="YouTube 或其他影片網址" />
+                </label>
+                <label>
+                  <span>檔案附件，單檔不超過 100M</span>
+                  <input id="capsuleFileInput" name="documentFiles" type="file" multiple />
                 </label>
                 <fieldset class="tone-field">
                   <legend>盒身顏色</legend>
@@ -199,6 +230,27 @@
           <section class="workspace">
             <aside class="composer-panel">
               <div class="panel-heading">
+                <h2>新增受益人</h2>
+              </div>
+              <form id="beneficiaryForm" class="capsule-form">
+                <label>
+                  <span>姓名</span>
+                  <input name="name" type="text" maxlength="40" required />
+                </label>
+                <label>
+                  <span>Email</span>
+                  <input name="email" type="email" required />
+                </label>
+                <label>
+                  <span>關係</span>
+                  <input name="relationship" type="text" maxlength="40" placeholder="家人、朋友、律師等" />
+                </label>
+                <button class="primary-button" type="submit">新增受益人</button>
+              </form>
+
+              <div class="beneficiary-list" id="beneficiaryList"></div>
+
+              <div class="panel-heading">
                 <h2>指定數位繼承人</h2>
               </div>
               <form id="legacyForm" class="capsule-form">
@@ -218,7 +270,7 @@
                   <span>開啟條件</span>
                   <select name="releaseMode" id="releaseModeInput">
                     <option value="date">指定日期開啟</option>
-                    <option value="death">系統確認用戶已過世後開啟</option>
+                    <option value="death">在我離世後開啟</option>
                   </select>
                 </label>
                 <label id="releaseDateLabel">
@@ -252,6 +304,14 @@
                 <label>
                   <span>每日登入獎勵</span>
                   <input name="dailyLoginCoins" type="number" min="0" step="1" />
+                </label>
+                <label>
+                  <span>離世確認後緩衝天數</span>
+                  <select name="deathBufferDays">
+                    <option value="7">7 天</option>
+                    <option value="14">14 天</option>
+                    <option value="30">30 天</option>
+                  </select>
                 </label>
                 <label>
                   <span>1 點時光幣折抵金額</span>
@@ -297,6 +357,10 @@
                 <label>
                   <span>商品描述</span>
                   <textarea name="description" rows="5" maxlength="600"></textarea>
+                </label>
+                <label>
+                  <span>商品圖片，請上傳 3-5 張</span>
+                  <input id="productImagesInput" name="productImages" type="file" accept="image/*" multiple required />
                 </label>
                 <button class="primary-button" type="submit">新增商品</button>
               </form>
