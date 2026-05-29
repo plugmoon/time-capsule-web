@@ -9,7 +9,10 @@
 - 到期開啟：到達指定時間後可開啟閱讀內容。
 - 密語保護：建立時可選擇加入保護密語。
 - 搜尋與篩選：依標題、收件人、內容、狀態查找。
-- 備份匯入匯出：以 JSON 檔備份或還原資料。
+- Google / Facebook 登入：填入 Firebase 設定後啟用正式 OAuth 登入；未設定時使用本機示範模式。
+- 時光幣：登入每日發放，可由後台設定發放數量與折抵比例。
+- 購物商城：商品分類、價格、庫存、運費、時光幣折抵、訂單與通知紀錄。
+- 數位繼承人：可指定 1 位或多位繼承人，並設定日期開啟或人工確認過世後開啟。
 
 ## 本機執行
 
@@ -39,3 +42,7 @@
 $env:GITHUB_TOKEN="你的 GitHub Personal Access Token"
 powershell -ExecutionPolicy Bypass -File .\deploy-github.ps1 -RepoName "time-capsule-web"
 ```
+
+## Firebase 正式模式
+
+請參考 `FIREBASE_SETUP.md`。正式 Google / Facebook 登入與雲端資料需要 Firebase Authentication、Cloud Firestore 與對應 OAuth provider 設定。
