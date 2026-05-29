@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="時光寶盒是一個可部署在 Web 上執行的時光膠囊 APP。"
+      content="時光寶盒是一個支援登入、時光幣、商城與數位繼承的 Web App。"
     />
     <title>時光寶盒</title>
     <link rel="icon" href="assets/time-capsule.svg" type="image/svg+xml" />
@@ -18,140 +18,297 @@
           <img src="assets/time-capsule.svg" alt="" class="brand-icon" />
           <span>時光寶盒</span>
         </a>
-        <nav class="top-actions" aria-label="主要操作">
-          <button class="icon-button" id="exportButton" type="button" title="匯出備份" aria-label="匯出備份">
-            <span aria-hidden="true">⇩</span>
-          </button>
-          <label class="icon-button import-label" for="importFile" title="匯入備份" aria-label="匯入備份">
-            <span aria-hidden="true">⇧</span>
-          </label>
-          <input id="importFile" type="file" accept="application/json" hidden />
-          <button class="primary-button" id="newCapsuleButton" type="button">
-            新增寶盒
-          </button>
-        </nav>
+
+        <div class="auth-panel" aria-label="會員登入">
+          <div class="user-chip" id="userChip" hidden>
+            <span class="avatar" id="userAvatar">時</span>
+            <span id="userName">訪客</span>
+            <strong><span id="coinBalance">0</span> 幣</strong>
+          </div>
+          <button class="secondary-button" id="googleLoginButton" type="button">Google 登入</button>
+          <button class="secondary-button" id="facebookLoginButton" type="button">Facebook 登入</button>
+          <button class="icon-button" id="logoutButton" type="button" title="登出" aria-label="登出" hidden>↪</button>
+        </div>
       </header>
 
       <main>
         <section class="overview" aria-label="總覽">
           <div class="overview-copy">
-            <p class="eyebrow">Time Capsule</p>
-            <h1>收藏現在，交給未來開啟。</h1>
+            <p class="eyebrow">Time Capsule Platform</p>
+            <h1>收藏現在，交給未來與信任的人開啟。</h1>
+            <p class="hero-note" id="runtimeMode">正在初始化資料模式。</p>
           </div>
-          <div class="stats-grid" aria-label="寶盒統計">
+          <div class="stats-grid" aria-label="平台統計">
             <article class="stat-card">
               <span class="stat-value" id="totalCount">0</span>
-              <span class="stat-label">全部</span>
+              <span class="stat-label">時光寶盒</span>
             </article>
             <article class="stat-card">
-              <span class="stat-value" id="lockedCount">0</span>
-              <span class="stat-label">封存中</span>
+              <span class="stat-value" id="coinStat">0</span>
+              <span class="stat-label">時光幣</span>
             </article>
             <article class="stat-card">
-              <span class="stat-value" id="readyCount">0</span>
-              <span class="stat-label">可開啟</span>
+              <span class="stat-value" id="productCount">0</span>
+              <span class="stat-label">商品</span>
             </article>
             <article class="stat-card">
-              <span class="stat-value" id="openedCount">0</span>
-              <span class="stat-label">已開啟</span>
+              <span class="stat-value" id="legacyCount">0</span>
+              <span class="stat-label">數位繼承</span>
             </article>
           </div>
         </section>
 
-        <section class="workspace" aria-label="時光寶盒工作區">
-          <aside class="composer-panel" id="composerPanel">
-            <div class="panel-heading">
-              <h2>建立寶盒</h2>
-              <button class="ghost-icon" id="closeComposerButton" type="button" title="關閉" aria-label="關閉建立表單">
-                ×
-              </button>
-            </div>
+        <nav class="tabbar" aria-label="功能切換">
+          <button class="tab active" type="button" data-view="capsulesView">時光寶盒</button>
+          <button class="tab" type="button" data-view="shopView">購物商城</button>
+          <button class="tab" type="button" data-view="legacyView">數位繼承</button>
+          <button class="tab" type="button" data-view="adminView">後台設定</button>
+        </nav>
 
-            <form id="capsuleForm" class="capsule-form">
-              <label>
-                <span>標題</span>
-                <input id="titleInput" name="title" type="text" maxlength="60" required placeholder="例如：給一年後的我" />
-              </label>
+        <section class="view active" id="capsulesView" aria-label="時光寶盒">
+          <section class="workspace">
+            <aside class="composer-panel">
+              <div class="panel-heading">
+                <h2>建立寶盒</h2>
+              </div>
 
-              <label>
-                <span>收件人</span>
-                <input id="recipientInput" name="recipient" type="text" maxlength="40" placeholder="自己、朋友或家人" />
-              </label>
-
-              <label>
-                <span>開啟時間</span>
-                <input id="unlockInput" name="unlockAt" type="datetime-local" required />
-              </label>
-
-              <label>
-                <span>心情標籤</span>
-                <select id="moodInput" name="mood">
-                  <option value="期待">期待</option>
-                  <option value="感謝">感謝</option>
-                  <option value="勇氣">勇氣</option>
-                  <option value="紀念">紀念</option>
-                  <option value="祕密">祕密</option>
-                </select>
-              </label>
-
-              <label>
-                <span>保護密語</span>
-                <input id="secretInput" name="secret" type="password" maxlength="40" autocomplete="new-password" placeholder="可留空" />
-              </label>
-
-              <label class="message-field">
-                <span>內容</span>
-                <textarea id="messageInput" name="message" rows="8" maxlength="1200" required placeholder="把想留給未來的話寫下來。"></textarea>
-              </label>
-
-              <fieldset class="tone-field">
-                <legend>盒身顏色</legend>
+              <form id="capsuleForm" class="capsule-form">
                 <label>
-                  <input type="radio" name="tone" value="mint" checked />
-                  <span class="tone-dot mint"></span>
-                  薄荷
+                  <span>標題</span>
+                  <input id="titleInput" name="title" type="text" maxlength="60" required placeholder="例如：給一年後的我" />
                 </label>
                 <label>
-                  <input type="radio" name="tone" value="coral" />
-                  <span class="tone-dot coral"></span>
-                  珊瑚
+                  <span>收件人</span>
+                  <input id="recipientInput" name="recipient" type="text" maxlength="40" placeholder="自己、朋友或家人" />
                 </label>
                 <label>
-                  <input type="radio" name="tone" value="amber" />
-                  <span class="tone-dot amber"></span>
-                  琥珀
+                  <span>開啟時間</span>
+                  <input id="unlockInput" name="unlockAt" type="datetime-local" required />
                 </label>
-              </fieldset>
+                <label>
+                  <span>心情標籤</span>
+                  <select id="moodInput" name="mood">
+                    <option value="期待">期待</option>
+                    <option value="感謝">感謝</option>
+                    <option value="勇氣">勇氣</option>
+                    <option value="紀念">紀念</option>
+                    <option value="祕密">祕密</option>
+                  </select>
+                </label>
+                <label>
+                  <span>保護密語</span>
+                  <input id="secretInput" name="secret" type="password" maxlength="40" autocomplete="new-password" placeholder="可留空" />
+                </label>
+                <label class="message-field">
+                  <span>內容</span>
+                  <textarea id="messageInput" name="message" rows="8" maxlength="1200" required placeholder="把想留給未來的話寫下來。"></textarea>
+                </label>
+                <fieldset class="tone-field">
+                  <legend>盒身顏色</legend>
+                  <label>
+                    <input type="radio" name="tone" value="mint" checked />
+                    <span class="tone-dot mint"></span>
+                    薄荷
+                  </label>
+                  <label>
+                    <input type="radio" name="tone" value="coral" />
+                    <span class="tone-dot coral"></span>
+                    珊瑚
+                  </label>
+                  <label>
+                    <input type="radio" name="tone" value="amber" />
+                    <span class="tone-dot amber"></span>
+                    琥珀
+                  </label>
+                </fieldset>
+                <div class="form-actions">
+                  <button class="secondary-button" type="reset">清除</button>
+                  <button class="primary-button" type="submit">封存寶盒</button>
+                </div>
+              </form>
+            </aside>
 
-              <div class="form-actions">
-                <button class="secondary-button" id="resetButton" type="reset">清除</button>
-                <button class="primary-button" type="submit">封存寶盒</button>
+            <section class="capsule-area">
+              <div class="toolbar">
+                <div class="search-box">
+                  <span aria-hidden="true">⌕</span>
+                  <input id="searchInput" type="search" placeholder="搜尋標題、收件人或內容" />
+                </div>
+                <div class="segmented-control" role="group" aria-label="篩選狀態">
+                  <button type="button" class="segment active" data-filter="all">全部</button>
+                  <button type="button" class="segment" data-filter="locked">封存中</button>
+                  <button type="button" class="segment" data-filter="ready">可開啟</button>
+                  <button type="button" class="segment" data-filter="opened">已開啟</button>
+                </div>
               </div>
-            </form>
-          </aside>
-
-          <section class="capsule-area" aria-label="寶盒列表">
-            <div class="toolbar">
-              <div class="search-box">
-                <span aria-hidden="true">⌕</span>
-                <input id="searchInput" type="search" placeholder="搜尋標題、收件人或內容" />
+              <div id="capsuleList" class="capsule-list" aria-live="polite"></div>
+              <div id="emptyState" class="empty-state" hidden>
+                <img src="assets/time-capsule.svg" alt="" />
+                <h2>尚未建立寶盒</h2>
+                <button class="primary-button" id="emptyCreateButton" type="button">建立第一個寶盒</button>
               </div>
-              <div class="segmented-control" role="group" aria-label="篩選狀態">
-                <button type="button" class="segment active" data-filter="all">全部</button>
-                <button type="button" class="segment" data-filter="locked">封存中</button>
-                <button type="button" class="segment" data-filter="ready">可開啟</button>
-                <button type="button" class="segment" data-filter="opened">已開啟</button>
-              </div>
-            </div>
-
-            <div id="capsuleList" class="capsule-list" aria-live="polite"></div>
-
-            <div id="emptyState" class="empty-state" hidden>
-              <img src="assets/time-capsule.svg" alt="" />
-              <h2>尚未建立寶盒</h2>
-              <button class="primary-button" id="emptyCreateButton" type="button">建立第一個寶盒</button>
-            </div>
+            </section>
           </section>
+        </section>
+
+        <section class="view" id="shopView" aria-label="購物商城">
+          <div class="shop-layout">
+            <section class="storefront-panel">
+              <div class="panel-heading">
+                <h2>購物商城</h2>
+                <select id="categoryFilter" aria-label="商品分類"></select>
+              </div>
+              <div id="productGrid" class="product-grid"></div>
+            </section>
+            <aside class="cart-panel">
+              <div class="panel-heading">
+                <h2>購物車</h2>
+                <span class="status-pill ready" id="cartCount">0 件</span>
+              </div>
+              <div id="cartItems" class="cart-items"></div>
+              <dl class="price-summary">
+                <div>
+                  <dt>商品小計</dt>
+                  <dd id="cartSubtotal">NT$0</dd>
+                </div>
+                <div>
+                  <dt>時光幣折抵</dt>
+                  <dd id="coinDiscount">-NT$0</dd>
+                </div>
+                <div>
+                  <dt>運費</dt>
+                  <dd id="shippingFee">NT$0</dd>
+                </div>
+                <div class="summary-total">
+                  <dt>總計</dt>
+                  <dd id="cartTotal">NT$0</dd>
+                </div>
+              </dl>
+              <label>
+                <span>本次使用時光幣</span>
+                <input id="useCoinsInput" type="number" min="0" step="1" value="0" />
+              </label>
+              <button class="primary-button" id="checkoutButton" type="button">建立訂單</button>
+              <p class="hint">下單後會建立通知紀錄；正式寄信需串接 Email 或 Cloud Functions。</p>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="legacyView" aria-label="數位繼承">
+          <section class="workspace">
+            <aside class="composer-panel">
+              <div class="panel-heading">
+                <h2>指定數位繼承人</h2>
+              </div>
+              <form id="legacyForm" class="capsule-form">
+                <label>
+                  <span>主題</span>
+                  <input name="title" type="text" maxlength="80" required placeholder="例如：給家人的最後一封信" />
+                </label>
+                <label>
+                  <span>繼承人姓名</span>
+                  <input name="heirNames" type="text" required placeholder="多位請用逗號分隔" />
+                </label>
+                <label>
+                  <span>繼承人 Email</span>
+                  <input name="heirEmails" type="text" required placeholder="多位請用逗號分隔" />
+                </label>
+                <label>
+                  <span>開啟條件</span>
+                  <select name="releaseMode" id="releaseModeInput">
+                    <option value="date">指定日期開啟</option>
+                    <option value="death">系統確認用戶已過世後開啟</option>
+                  </select>
+                </label>
+                <label id="releaseDateLabel">
+                  <span>指定開啟日期</span>
+                  <input name="releaseDate" id="releaseDateInput" type="date" />
+                </label>
+                <label>
+                  <span>留給繼承人的訊息</span>
+                  <textarea name="message" rows="8" maxlength="1600" required></textarea>
+                </label>
+                <button class="primary-button" type="submit">建立繼承設定</button>
+              </form>
+            </aside>
+            <section class="capsule-area">
+              <div class="panel-heading list-heading">
+                <h2>繼承設定</h2>
+                <span class="hint">「確認過世」需由人工審核流程觸發，系統不自動判定死亡。</span>
+              </div>
+              <div id="legacyList" class="capsule-list"></div>
+            </section>
+          </section>
+        </section>
+
+        <section class="view" id="adminView" aria-label="後台設定">
+          <div class="admin-grid">
+            <section class="composer-panel admin-card">
+              <div class="panel-heading">
+                <h2>時光幣設定</h2>
+              </div>
+              <form id="settingsForm" class="capsule-form">
+                <label>
+                  <span>每日登入獎勵</span>
+                  <input name="dailyLoginCoins" type="number" min="0" step="1" />
+                </label>
+                <label>
+                  <span>1 點時光幣折抵金額</span>
+                  <input name="coinValueTwd" type="number" min="0" step="1" />
+                </label>
+                <label>
+                  <span>固定運費</span>
+                  <input name="shippingFee" type="number" min="0" step="1" />
+                </label>
+                <label>
+                  <span>免運門檻</span>
+                  <input name="freeShippingThreshold" type="number" min="0" step="1" />
+                </label>
+                <label>
+                  <span>通知收件信箱</span>
+                  <input name="notificationEmail" type="email" />
+                </label>
+                <button class="primary-button" type="submit">儲存設定</button>
+              </form>
+            </section>
+
+            <section class="composer-panel admin-card">
+              <div class="panel-heading">
+                <h2>商品上架</h2>
+              </div>
+              <form id="productForm" class="capsule-form">
+                <label>
+                  <span>商品名稱</span>
+                  <input name="name" type="text" maxlength="80" required />
+                </label>
+                <label>
+                  <span>分類</span>
+                  <input name="category" type="text" maxlength="40" required placeholder="例如：紀念商品" />
+                </label>
+                <label>
+                  <span>金額</span>
+                  <input name="price" type="number" min="0" step="1" required />
+                </label>
+                <label>
+                  <span>庫存</span>
+                  <input name="stock" type="number" min="0" step="1" required />
+                </label>
+                <label>
+                  <span>商品描述</span>
+                  <textarea name="description" rows="5" maxlength="600"></textarea>
+                </label>
+                <button class="primary-button" type="submit">新增商品</button>
+              </form>
+            </section>
+
+            <section class="capsule-area admin-wide">
+              <div class="panel-heading">
+                <h2>訂單與通知</h2>
+                <button class="secondary-button" id="confirmDeathButton" type="button">確認目前用戶過世</button>
+              </div>
+              <div id="adminTimeline" class="timeline"></div>
+            </section>
+          </div>
         </section>
       </main>
     </div>
@@ -180,7 +337,7 @@
       <article class="capsule-card">
         <div class="capsule-card-top">
           <span class="status-pill"></span>
-          <button class="ghost-icon delete-button" type="button" title="刪除" aria-label="刪除寶盒">×</button>
+          <button class="ghost-icon delete-button" type="button" title="刪除" aria-label="刪除">×</button>
         </div>
         <h2></h2>
         <p class="capsule-preview"></p>
@@ -201,6 +358,7 @@
       </article>
     </template>
 
-    <script src="app.js" defer></script>
+    <script src="firebase-config.js"></script>
+    <script src="app.js"></script>
   </body>
 </html>
