@@ -155,6 +155,12 @@ button {
   font-weight: 700;
 }
 
+.danger-button {
+  color: #893822;
+  background: rgba(216, 100, 74, 0.12);
+  border-color: rgba(216, 100, 74, 0.34);
+}
+
 .icon-button,
 .ghost-icon {
   display: inline-grid;
@@ -688,6 +694,12 @@ textarea {
 .product-body p {
   color: var(--muted);
   line-height: 1.55;
+}
+
+.product-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .product-meta,
