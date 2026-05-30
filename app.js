@@ -5,7 +5,7 @@ const FIREBASE_READY = !DEMO_MODE && Boolean(FIREBASE_CONFIG.apiKey && !String(F
 const MB = 1024 * 1024;
 const MAX_IMAGE_SIZE = 10 * MB;
 const MAX_FILE_SIZE = 100 * MB;
-const FIRESTORE_SYNC_TIMEOUT_MS = 4500;
+const FIRESTORE_SYNC_TIMEOUT_MS = 8000;
 
 const DEFAULT_SETTINGS = {
   dailyLoginCoins: 10,
@@ -59,7 +59,7 @@ const state = {
   user: null,
   profile: null,
   capsules: [],
-  products: [],
+  products: DEFAULT_PRODUCTS,
   settings: { ...DEFAULT_SETTINGS },
   orders: [],
   notifications: [],
@@ -566,7 +566,7 @@ function getFirebaseFriendlyError(error, provider = "") {
   }
 
   if (code === "firestore-timeout") {
-    return "Firestore 同步等待時間過久，系統已先顯示帳號並改用本機資料。請確認 Firestore Database 已建立、規則已發布，或稍後重新整理再試。";
+    return "Firestore 同步等待時間較久，系統會先顯示帳號並繼續同步雲端資料。";
   }
 
   if (code === "unavailable" || detail.includes("unavailable")) {
@@ -602,6 +602,23 @@ async function loadData() {
   if (state.heirMessages.length && state.profile?.role !== "superAdmin") {
     state.profile.role = "heir";
   }
+}
+
+async function loadPublicData() {
+  if (!(state.firebase?.db && state.firebase?.getDoc && state.firebase?.getDocs)) {
+    const store = readLocalStore();
+    state.settings = store.settings;
+    state.products = store.products;
+    return;
+  }
+
+  const fb = state.firebase;
+  const [settingsSnap, productSnap] = await Promise.all([
+    fb.getDoc(fb.doc(fb.db, "platform", "settings")),
+    fb.getDocs(fb.collection(fb.db, "products")),
+  ]);
+  state.settings = settingsSnap.exists() ? { ...DEFAULT_SETTINGS, ...settingsSnap.data() } : { ...DEFAULT_SETTINGS };
+  state.products = productSnap.empty ? DEFAULT_PRODUCTS : productSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
 async function loadFirebaseData(syncId = state.authSyncId) {
@@ -651,17 +668,37 @@ async function loadFirebaseData(syncId = state.authSyncId) {
   state.beneficiaries = beneficiarySnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.orders = orderSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.notifications = [];
-  state.heirMessages = await loadFirebaseHeirMessages();
-  if (state.heirMessages.length && state.profile.role !== "superAdmin") {
-    state.profile.role = "heir";
-  }
-  state.adminUsers = state.profile.role === "superAdmin" ? await loadFirebaseAdminUsers() : [];
+  state.heirMessages = [];
+  state.adminUsers = state.profile.role === "superAdmin" ? state.adminUsers : [];
 
   await fb.setDoc(userRef, state.profile, { merge: true });
   if (!settingsSnap.exists() && isSuperAdmin()) {
     await fb.setDoc(settingsRef, state.settings, { merge: true });
   }
+  await migrateLocalDataToFirebase();
   return true;
+}
+
+async function refreshRoleScopedData(syncId = state.authSyncId, userId = state.user?.uid) {
+  if (!(state.mode === "firebase" && state.firebase && state.user)) {
+    return;
+  }
+
+  const [heirMessages, adminUsers] = await Promise.all([
+    loadFirebaseHeirMessages(),
+    isSuperAdmin() ? loadFirebaseAdminUsers() : Promise.resolve([]),
+  ]);
+
+  if (syncId !== state.authSyncId || state.user?.uid !== userId) {
+    return;
+  }
+
+  state.heirMessages = heirMessages;
+  if (heirMessages.length && state.profile?.role !== "superAdmin") {
+    state.profile.role = "heir";
+  }
+  state.adminUsers = isSuperAdmin() ? adminUsers : [];
+  render();
 }
 
 function getAdminUsersFromStore(store = readLocalStore()) {
@@ -842,7 +879,11 @@ async function deleteLocalCollectionItem(collectionName, id, ownerId = state.use
 }
 
 async function persistCollectionItem(collectionName, item, ownerId = state.user?.uid) {
-  if (state.mode === "firebase" && state.firebase && state.user) {
+  const canWriteRemote =
+    state.mode === "firebase" &&
+    state.firebase &&
+    (state.user || ["orders", "notifications"].includes(collectionName));
+  if (canWriteRemote) {
     const fb = state.firebase;
     if (collectionName === "capsules") {
       await fb.setDoc(fb.doc(fb.db, "users", ownerId, "capsules", item.id), item, { merge: true });
@@ -857,8 +898,10 @@ async function persistCollectionItem(collectionName, item, ownerId = state.user?
     } else if (collectionName === "notifications") {
       await fb.setDoc(fb.doc(fb.db, "notifications", item.id), item, { merge: true });
     }
-    await fb.setDoc(fb.doc(fb.db, "users", state.user.uid), state.profile, { merge: true });
-    if (isSuperAdmin()) {
+    if (state.user && state.profile) {
+      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid), state.profile, { merge: true });
+    }
+    if (state.user && isSuperAdmin()) {
       await fb.setDoc(fb.doc(fb.db, "platform", "settings"), state.settings, { merge: true });
     }
     return;
@@ -924,6 +967,54 @@ async function saveHeirAccess(beneficiary) {
     ),
   ];
   writeLocalStore(store);
+}
+
+async function migrateLocalDataToFirebase() {
+  if (!(state.mode === "firebase" && state.firebase && state.user)) {
+    return;
+  }
+
+  const store = readLocalStore();
+  const bucket = store.users?.[state.user.uid];
+  if (!bucket) {
+    return;
+  }
+
+  const fb = state.firebase;
+  const addMissing = (current, local) => {
+    const ids = new Set(current.map((item) => item.id));
+    return [...current, ...local.filter((item) => item?.id && !ids.has(item.id))];
+  };
+
+  const mergedCapsules = addMissing(state.capsules, bucket.capsules || []);
+  const mergedInheritances = addMissing(state.inheritances, bucket.inheritances || []);
+  const mergedBeneficiaries = addMissing(state.beneficiaries, bucket.beneficiaries || []);
+  const changed =
+    mergedCapsules.length !== state.capsules.length ||
+    mergedInheritances.length !== state.inheritances.length ||
+    mergedBeneficiaries.length !== state.beneficiaries.length;
+
+  if (changed) {
+    state.capsules = mergedCapsules;
+    state.inheritances = mergedInheritances;
+    state.beneficiaries = mergedBeneficiaries;
+    await Promise.all([
+      ...state.capsules.map((item) => fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "capsules", item.id), item, { merge: true })),
+      ...state.inheritances.map((item) => fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "inheritances", item.id), item, { merge: true })),
+      ...state.beneficiaries.map((item) => fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "beneficiaries", item.id), item, { merge: true })),
+    ]);
+  }
+
+  if (isSuperAdmin()) {
+    const productIds = new Set(state.products.map((item) => item.id));
+    const localProducts = (store.products || []).filter((item) => item?.id && !productIds.has(item.id));
+    if (localProducts.length) {
+      state.products = [...state.products, ...localProducts];
+      await Promise.all(
+        localProducts.map((item) => fb.setDoc(fb.doc(fb.db, "products", item.id), item, { merge: true })),
+      );
+    }
+  }
 }
 
 async function deleteHeirAccess(beneficiary) {
@@ -1008,19 +1099,44 @@ async function login(provider) {
 }
 
 async function hydrateFirebaseDataAfterLogin(syncId, userId) {
+  const syncPromise = loadFirebaseData(syncId);
   try {
     state.mode = "firebase";
-    await withTimeout(loadFirebaseData(syncId), FIRESTORE_SYNC_TIMEOUT_MS, "firestore-timeout");
+    await withTimeout(syncPromise, FIRESTORE_SYNC_TIMEOUT_MS, "firestore-timeout");
     if (syncId !== state.authSyncId || state.user?.uid !== userId) {
       return;
     }
     setAuthNotice("登入成功，已連接 Firebase 雲端資料。", "success");
     state.pendingSyncUserId = null;
+    refreshRoleScopedData(syncId, userId);
   } catch (error) {
     if (syncId !== state.authSyncId || state.user?.uid !== userId) {
       return;
     }
     console.error(error);
+    if (error?.code === "firestore-timeout") {
+      setAuthNotice(`${getFirebaseFriendlyError(error)} 請稍候，資料載入完成後會自動更新畫面。`, "info");
+      syncPromise
+        .then(() => {
+          if (syncId !== state.authSyncId || state.user?.uid !== userId) {
+            return;
+          }
+          setAuthNotice("雲端資料同步完成。", "success");
+          state.pendingSyncUserId = null;
+          render();
+          refreshRoleScopedData(syncId, userId);
+        })
+        .catch((lateError) => {
+          if (syncId !== state.authSyncId || state.user?.uid !== userId) {
+            return;
+          }
+          console.error(lateError);
+          state.pendingSyncUserId = null;
+          setAuthNotice(`${getFirebaseFriendlyError(lateError)} 雲端同步失敗，請確認 Firestore 規則已發布。`, "error");
+        });
+      render();
+      return;
+    }
     state.authSyncId += 1;
     state.pendingSyncUserId = null;
     state.mode = "local";
@@ -1273,7 +1389,7 @@ function renderShop() {
       button.className = "primary-button";
       button.type = "button";
       button.textContent = "加入購物車";
-      button.disabled = Number(product.stock) <= 0 || isHeirRole();
+      button.disabled = Number(product.stock) <= 0;
       button.addEventListener("click", () => addToCart(product.id));
       card.querySelector(".product-body").append(button);
 
@@ -1313,13 +1429,15 @@ function renderShop() {
 
 function renderCart() {
   const subtotal = state.cart.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const canUseCoins = Boolean(state.user && state.profile);
   const maxCoins = Math.min(
-    Number(state.profile?.coins) || 0,
+    canUseCoins ? Number(state.profile?.coins) || 0 : 0,
     Math.floor(subtotal / Math.max(1, Number(state.settings.coinValueTwd) || 1)),
   );
   const requestedCoins = Math.min(maxCoins, Math.max(0, Number(els.useCoinsInput.value) || 0));
   els.useCoinsInput.max = String(maxCoins);
   els.useCoinsInput.value = String(requestedCoins);
+  els.useCoinsInput.disabled = !canUseCoins || maxCoins === 0;
 
   const coinDiscount = requestedCoins * (Number(state.settings.coinValueTwd) || 0);
   const shipping =
@@ -1353,6 +1471,7 @@ function renderCart() {
   els.coinDiscount.textContent = `-${money(coinDiscount)}`;
   els.shippingFee.textContent = money(shipping);
   els.cartTotal.textContent = money(total);
+  els.checkoutButton.disabled = state.cart.length === 0;
 }
 
 function renderLegacy() {
@@ -1897,10 +2016,6 @@ async function confirmUnlock() {
 }
 
 function addToCart(productId) {
-  if (!requireStandardUser()) {
-    return;
-  }
-
   const product = state.products.find((item) => item.id === productId);
   if (!product || Number(product.stock) <= 0) {
     return;
@@ -1970,13 +2085,13 @@ async function deleteBeneficiary(id) {
 }
 
 async function checkout() {
-  if (!requireStandardUser() || state.cart.length === 0) {
+  if (state.cart.length === 0) {
     return;
   }
 
   const subtotal = state.cart.reduce((sum, item) => sum + item.price * item.qty, 0);
   const maxCoins = Math.min(
-    Number(state.profile.coins) || 0,
+    state.user && state.profile ? Number(state.profile.coins) || 0 : 0,
     Math.floor(subtotal / Math.max(1, Number(state.settings.coinValueTwd) || 1)),
   );
   const usedCoins = Math.min(maxCoins, Math.max(0, Number(els.useCoinsInput.value) || 0));
@@ -1987,7 +2102,8 @@ async function checkout() {
 
   const order = {
     id: uid(),
-    userId: state.user.uid,
+    userId: state.user?.uid || `guest-${uid()}`,
+    userEmail: state.user?.email || "",
     items: state.cart,
     subtotal,
     usedCoins,
@@ -1999,17 +2115,21 @@ async function checkout() {
     createdAt: new Date().toISOString(),
   };
 
-  state.profile.coins = Math.max(0, (Number(state.profile.coins) || 0) - usedCoins);
+  if (state.profile) {
+    state.profile.coins = Math.max(0, (Number(state.profile.coins) || 0) - usedCoins);
+  }
   state.orders.unshift(order);
-  state.notifications.unshift({
+  const notification = {
     id: uid(),
     type: "order",
-    userId: state.user.uid,
-    message: `新訂單已建立，通知對象：${state.settings.notificationEmail}`,
+    userId: state.user?.uid || "guest",
+    message: `${state.user ? "會員" : "訪客"}新訂單已建立，通知對象：${state.settings.notificationEmail}`,
     createdAt: new Date().toISOString(),
-  });
+  };
+  state.notifications.unshift(notification);
   state.cart = [];
   await persistCollectionItem("orders", order);
+  await persistCollectionItem("notifications", notification);
   await persistAll();
   render();
   alert("訂單已建立。");
@@ -2316,6 +2436,15 @@ async function start() {
 
   if (FIREBASE_READY) {
     await initFirebase();
+    loadPublicData()
+      .then(() => render())
+      .catch((error) => {
+        console.error(error);
+        const store = readLocalStore();
+        state.settings = store.settings;
+        state.products = store.products;
+        render();
+      });
     state.firebase
       .getRedirectResult(state.firebase.auth)
       .catch((error) => setAuthNotice(getFirebaseFriendlyError(error), "error"));
