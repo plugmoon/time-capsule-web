@@ -942,7 +942,7 @@ async function persistCollectionItem(collectionName, item, ownerId = state.user?
   const canWriteRemote =
     state.mode === "firebase" &&
     state.firebase &&
-    (state.user || ["orders", "notifications"].includes(collectionName));
+    state.user;
   if (canWriteRemote) {
     const fb = state.firebase;
     if (collectionName === "capsules") {
@@ -1530,7 +1530,7 @@ function renderShop() {
       const button = document.createElement("button");
       button.className = "primary-button";
       button.type = "button";
-      button.textContent = "加入購物車";
+      button.textContent = state.user ? "加入購物車" : "登入後購買";
       button.disabled = Number(product.stock) <= 0;
       button.addEventListener("click", () => addToCart(product.id));
       card.querySelector(".product-body").append(button);
@@ -2118,6 +2118,10 @@ async function confirmUnlock() {
 }
 
 function addToCart(productId) {
+  if (!requireLogin()) {
+    return;
+  }
+
   const product = state.products.find((item) => item.id === productId);
   if (!product || Number(product.stock) <= 0) {
     return;
@@ -2193,6 +2197,9 @@ async function checkout() {
   if (state.cart.length === 0) {
     return;
   }
+  if (!requireLogin()) {
+    return;
+  }
   if (!requireCompleteProfile("線上商城購物")) {
     return;
   }
@@ -2210,8 +2217,8 @@ async function checkout() {
 
   const order = {
     id: uid(),
-    userId: state.user?.uid || `guest-${uid()}`,
-    userEmail: state.user?.email || "",
+    userId: state.user.uid,
+    userEmail: state.user.email || "",
     customer: {
       realName: state.profile?.realName || "",
       nickname: state.profile?.nickname || "",
@@ -2237,8 +2244,8 @@ async function checkout() {
   const notification = {
     id: uid(),
     type: "order",
-    userId: state.user?.uid || "guest",
-    message: `${state.user ? "會員" : "訪客"}新訂單已建立，通知對象：${state.settings.notificationEmail}`,
+    userId: state.user.uid,
+    message: `會員新訂單已建立，通知對象：${state.settings.notificationEmail}`,
     createdAt: new Date().toISOString(),
   };
   state.notifications.unshift(notification);
