@@ -569,8 +569,16 @@ function getFirebaseFriendlyError(error, provider = "") {
     return "Firestore 同步等待時間較久，系統會先顯示帳號並繼續同步雲端資料。";
   }
 
+  if (
+    detail.includes("Cloud Firestore API") ||
+    detail.includes("SERVICE_DISABLED") ||
+    detail.includes("firestore.googleapis.com")
+  ) {
+    return "Cloud Firestore API 尚未啟用。請到 Google Cloud/Firebase Console 啟用 Cloud Firestore API，並建立 Firestore Database。";
+  }
+
   if (code === "unavailable" || detail.includes("unavailable")) {
-    return "Firestore 目前無法連線。請確認 Firestore Database 已建立、網路正常，並已套用 firestore.rules。";
+    return "Firestore 目前無法連線。請確認 Cloud Firestore API 已啟用、Firestore Database 已建立、網路正常，並已發布 firestore.rules。";
   }
 
   if (detail.includes("permission-denied")) {
