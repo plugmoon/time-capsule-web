@@ -71,6 +71,7 @@ const state = {
   activeCapsuleId: null,
   editingProductId: null,
   authSyncId: 0,
+  pendingSyncUserId: null,
 };
 
 const els = {
@@ -413,6 +414,47 @@ function createProfileFromAuthUser(user) {
   };
 }
 
+function createUserFromFirebaseUser(user) {
+  return {
+    uid: user.uid,
+    displayName: user.displayName || user.email || "會員",
+    email: user.email || "",
+    provider: user.providerData?.[0]?.providerId || "firebase",
+  };
+}
+
+function clearSessionState() {
+  state.user = null;
+  state.profile = null;
+  state.capsules = [];
+  state.inheritances = [];
+  state.beneficiaries = [];
+  state.orders = [];
+  state.notifications = [];
+  state.cart = [];
+}
+
+function startAuthenticatedSession(firebaseUser, message = "已登入 Google，正在同步雲端資料。") {
+  const appUser = createUserFromFirebaseUser(firebaseUser);
+  const shouldStartSync = state.pendingSyncUserId !== appUser.uid;
+  const syncId = shouldStartSync ? state.authSyncId + 1 : state.authSyncId;
+
+  if (shouldStartSync) {
+    state.authSyncId = syncId;
+    state.pendingSyncUserId = appUser.uid;
+  }
+
+  state.mode = "firebase";
+  state.user = appUser;
+  state.profile = createProfileFromAuthUser(appUser);
+  render();
+  setAuthNotice(message, "info");
+
+  if (shouldStartSync) {
+    hydrateFirebaseDataAfterLogin(syncId, appUser.uid);
+  }
+}
+
 function withTimeout(promise, ms, code) {
   let timeoutId;
   const timeout = new Promise((_, reject) => {
@@ -629,10 +671,20 @@ async function login(provider) {
   if (FIREBASE_READY && state.firebase) {
     const fb = state.firebase;
     const authProvider = new fb.GoogleAuthProvider();
+    authProvider.setCustomParameters({ prompt: "select_account" });
+
+    if (fb.auth.currentUser) {
+      startAuthenticatedSession(fb.auth.currentUser, "已偵測到現有 Google 登入，正在同步雲端資料。");
+      return;
+    }
+
     setAuthNotice("正在開啟登入視窗，請在彈窗中完成授權。");
 
     try {
-      await fb.signInWithPopup(fb.auth, authProvider);
+      const credential = await fb.signInWithPopup(fb.auth, authProvider);
+      if (credential?.user) {
+        startAuthenticatedSession(credential.user, "已完成 Google 登入，正在同步雲端資料。");
+      }
     } catch (error) {
       console.error(error);
 
@@ -667,12 +719,14 @@ async function hydrateFirebaseDataAfterLogin(syncId, userId) {
       return;
     }
     setAuthNotice("登入成功，已連接 Firebase 雲端資料。", "success");
+    state.pendingSyncUserId = null;
   } catch (error) {
     if (syncId !== state.authSyncId || state.user?.uid !== userId) {
       return;
     }
     console.error(error);
     state.authSyncId += 1;
+    state.pendingSyncUserId = null;
     state.mode = "local";
     await loadData();
     if (!state.profile) {
@@ -687,16 +741,22 @@ async function hydrateFirebaseDataAfterLogin(syncId, userId) {
 }
 
 async function logout() {
-  if (state.mode === "firebase" && state.firebase) {
-    await state.firebase.signOut(state.firebase.auth);
+  state.authSyncId += 1;
+  state.pendingSyncUserId = null;
+  let logoutError = null;
+
+  if (state.firebase) {
+    try {
+      await state.firebase.signOut(state.firebase.auth);
+    } catch (error) {
+      console.error(error);
+      logoutError = error;
+    }
   }
-  state.user = null;
-  state.profile = null;
-  state.capsules = [];
-  state.inheritances = [];
-  state.orders = [];
-  state.cart = [];
-  setAuthNotice("");
+
+  clearSessionState();
+  state.mode = FIREBASE_READY ? "firebase" : "local";
+  setAuthNotice(logoutError ? getFirebaseFriendlyError(logoutError) : "", logoutError ? "error" : "info");
   render();
 }
 
@@ -1655,32 +1715,15 @@ async function start() {
       .catch((error) => setAuthNotice(getFirebaseFriendlyError(error), "error"));
 
     state.firebase.onAuthStateChanged(state.firebase.auth, (user) => {
-      const syncId = state.authSyncId + 1;
-      state.authSyncId = syncId;
-      state.mode = "firebase";
-      state.user = user
-        ? {
-            uid: user.uid,
-            displayName: user.displayName || user.email || "會員",
-            email: user.email || "",
-            provider: user.providerData?.[0]?.providerId || "firebase",
-          }
-        : null;
-      if (state.user) {
-        state.profile = createProfileFromAuthUser(state.user);
-        render();
-        setAuthNotice("已登入 Google，正在同步雲端資料。", "info");
-        hydrateFirebaseDataAfterLogin(syncId, state.user.uid);
+      if (user) {
+        startAuthenticatedSession(user);
         return;
-      } else {
-        state.profile = null;
-        state.capsules = [];
-        state.inheritances = [];
-        state.beneficiaries = [];
-        state.orders = [];
-        state.notifications = [];
-        state.cart = [];
       }
+
+      state.authSyncId += 1;
+      state.pendingSyncUserId = null;
+      state.mode = "firebase";
+      clearSessionState();
       render();
     });
   } else {
