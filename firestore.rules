@@ -10,42 +10,68 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function isSuperAdmin() {
+      return signedIn()
+        && (
+          exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "superAdmin"
+        );
+    }
+
+    function isHeirFor(uid) {
+      return signedIn()
+        && request.auth.token.email != null
+        && exists(/databases/$(database)/documents/heirAccess/$(uid)/emails/$(request.auth.token.email));
+    }
+
     match /users/{uid} {
-      allow read, write: if owns(uid);
+      allow read, write: if owns(uid) || isSuperAdmin();
 
       match /capsules/{capsuleId} {
-        allow read, write: if owns(uid);
+        allow read: if owns(uid) || isSuperAdmin() || isHeirFor(uid);
+        allow write: if owns(uid) || isSuperAdmin();
       }
 
       match /inheritances/{inheritanceId} {
-        allow read, write: if owns(uid);
+        allow read: if owns(uid) || isSuperAdmin() || isHeirFor(uid);
+        allow write: if owns(uid) || isSuperAdmin();
       }
 
       match /beneficiaries/{beneficiaryId} {
-        allow read, write: if owns(uid);
+        allow read, write: if owns(uid) || isSuperAdmin();
       }
+    }
+
+    match /heirAccess/{ownerUid}/emails/{email} {
+      allow read: if isSuperAdmin() || (signedIn() && resource.data.email == request.auth.token.email);
+      allow write: if owns(ownerUid) || isSuperAdmin();
     }
 
     match /products/{productId} {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if isSuperAdmin();
     }
 
     match /orders/{orderId} {
       allow create: if signedIn() && request.resource.data.userId == request.auth.uid;
-      allow read: if signedIn() && resource.data.userId == request.auth.uid;
-      allow update, delete: if false;
+      allow read: if isSuperAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow update, delete: if isSuperAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
     }
 
     match /notifications/{notificationId} {
       allow create: if signedIn();
       allow read: if signedIn();
-      allow update, delete: if false;
+      allow update, delete: if isSuperAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
     }
 
     match /platform/settings {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    match /admins/{uid} {
+      allow read: if signedIn();
+      allow write: if false;
     }
   }
 }
