@@ -9,7 +9,7 @@
     />
     <title>時光寶盒</title>
     <link rel="icon" href="assets/time-capsule.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20260530-login-fix2" />
+    <link rel="stylesheet" href="styles.css?v=20260530-role-admin" />
   </head>
   <body>
     <div class="app-shell">
@@ -63,6 +63,7 @@
           <button class="tab active" type="button" data-view="capsulesView">時光寶盒</button>
           <button class="tab" type="button" data-view="shopView">購物商城</button>
           <button class="tab" type="button" data-view="legacyView">數位繼承</button>
+          <button class="tab" type="button" data-view="heirView" hidden>繼承訊息</button>
           <button class="tab" type="button" data-view="adminView">後台設定</button>
         </nav>
 
@@ -297,8 +298,52 @@
           </section>
         </section>
 
+        <section class="view" id="heirView" aria-label="繼承訊息">
+          <section class="capsule-area">
+            <div class="panel-heading list-heading">
+              <div>
+                <h2>繼承訊息</h2>
+                <p class="hint">您目前以繼承人角色登入，只能查看已被指定給您的訊息。若要建立自己的時光寶盒，請使用 Google 登入一般會員帳號。</p>
+              </div>
+            </div>
+            <div id="heirMessageList" class="capsule-list"></div>
+          </section>
+        </section>
+
         <section class="view" id="adminView" aria-label="後台設定">
           <div class="admin-grid">
+            <section class="composer-panel admin-card admin-wide">
+              <div class="panel-heading">
+                <h2>用戶訊息管理</h2>
+              </div>
+              <form id="adminMessageForm" class="capsule-form admin-message-form">
+                <label>
+                  <span>選擇用戶</span>
+                  <select id="adminUserSelect" name="userId"></select>
+                </label>
+                <label>
+                  <span>訊息類型</span>
+                  <select name="messageType">
+                    <option value="capsules">時光寶盒</option>
+                    <option value="inheritances">數位繼承</option>
+                  </select>
+                </label>
+                <label>
+                  <span>標題</span>
+                  <input name="title" type="text" maxlength="80" required />
+                </label>
+                <label>
+                  <span>訊息內容</span>
+                  <textarea name="message" rows="5" maxlength="1600" required></textarea>
+                </label>
+                <div class="form-actions">
+                  <button class="secondary-button" id="cancelAdminMessageEditButton" type="button" hidden>取消編輯</button>
+                  <button class="primary-button" id="adminMessageSubmitButton" type="submit">新增訊息</button>
+                </div>
+              </form>
+              <div id="adminUserMessageList" class="timeline admin-message-list"></div>
+            </section>
+
             <section class="composer-panel admin-card">
               <div class="panel-heading">
                 <h2>時光幣設定</h2>
@@ -339,6 +384,7 @@
                     <option value="gold">黃金級用戶</option>
                     <option value="silver">白銀級用戶</option>
                     <option value="member">一般用戶</option>
+                    <option value="heir">繼承人</option>
                     <option value="guest">訪客</option>
                   </select>
                 </label>
@@ -439,7 +485,7 @@
       </article>
     </template>
 
-    <script src="firebase-config.js?v=20260530-login-fix2"></script>
-    <script src="app.js?v=20260530-login-fix2"></script>
+    <script src="firebase-config.js?v=20260530-role-admin"></script>
+    <script src="app.js?v=20260530-role-admin"></script>
   </body>
 </html>
