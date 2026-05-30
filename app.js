@@ -22,6 +22,7 @@ const ROLE_LABELS = {
   gold: "黃金級用戶",
   silver: "白銀級用戶",
   member: "一般用戶",
+  heir: "繼承人",
   guest: "訪客",
 };
 
@@ -70,6 +71,10 @@ const state = {
   category: "all",
   activeCapsuleId: null,
   editingProductId: null,
+  adminUsers: [],
+  adminSelectedUserId: "",
+  adminEditingMessage: null,
+  heirMessages: [],
   authSyncId: 0,
   pendingSyncUserId: null,
 };
@@ -133,6 +138,12 @@ const els = {
   productImagesInput: document.querySelector("#productImagesInput"),
   productSubmitButton: document.querySelector("#productSubmitButton"),
   cancelProductEditButton: document.querySelector("#cancelProductEditButton"),
+  adminUserSelect: document.querySelector("#adminUserSelect"),
+  adminMessageForm: document.querySelector("#adminMessageForm"),
+  adminMessageSubmitButton: document.querySelector("#adminMessageSubmitButton"),
+  cancelAdminMessageEditButton: document.querySelector("#cancelAdminMessageEditButton"),
+  adminUserMessageList: document.querySelector("#adminUserMessageList"),
+  heirMessageList: document.querySelector("#heirMessageList"),
   adminTimeline: document.querySelector("#adminTimeline"),
   confirmDeathButton: document.querySelector("#confirmDeathButton"),
 };
@@ -191,6 +202,57 @@ function getBeneficiaryName(id) {
 
 function getBeneficiary(id) {
   return state.beneficiaries.find((beneficiary) => beneficiary.id === id) || null;
+}
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getCurrentRole() {
+  return state.profile?.role || state.settings.currentUserRole || "member";
+}
+
+function isSuperAdmin() {
+  return Boolean(state.user) && getCurrentRole() === "superAdmin";
+}
+
+function isHeirRole() {
+  return Boolean(state.user) && getCurrentRole() === "heir";
+}
+
+function getAllowedViews() {
+  if (!state.user) {
+    return ["capsulesView", "shopView", "legacyView"];
+  }
+  if (isHeirRole()) {
+    return ["heirView"];
+  }
+  return isSuperAdmin()
+    ? ["capsulesView", "shopView", "legacyView", "adminView"]
+    : ["capsulesView", "shopView", "legacyView"];
+}
+
+function requireStandardUser() {
+  if (!requireLogin()) {
+    return false;
+  }
+  if (isHeirRole()) {
+    alert("繼承人角色只能查看被指定的訊息，不能操作時光寶盒、購物商城或數位繼承功能。");
+    switchView("heirView", true);
+    return false;
+  }
+  return true;
+}
+
+function requireSuperAdmin() {
+  if (!requireLogin()) {
+    return false;
+  }
+  if (!isSuperAdmin()) {
+    alert("此功能僅限最高管理員使用。");
+    return false;
+  }
+  return true;
 }
 
 function getCapsuleStatus(capsule) {
@@ -265,6 +327,7 @@ function readLocalStore() {
       products: data.products?.length ? data.products : DEFAULT_PRODUCTS,
       orders: data.orders || [],
       notifications: data.notifications || [],
+      heirAccess: data.heirAccess || [],
     };
   } catch {
     return {
@@ -273,6 +336,7 @@ function readLocalStore() {
       products: DEFAULT_PRODUCTS,
       orders: [],
       notifications: [],
+      heirAccess: [],
     };
   }
 }
@@ -352,14 +416,23 @@ function getUserBucket(store = readLocalStore()) {
     return null;
   }
 
-  store.users[state.user.uid] ||= {
+  return getUserBucketById(state.user.uid, store, state.user);
+}
+
+function getUserBucketById(uidValue, store = readLocalStore(), profileSeed = {}) {
+  if (!uidValue) {
+    return null;
+  }
+
+  store.users[uidValue] ||= {
     profile: {
-      uid: state.user.uid,
-      displayName: state.user.displayName,
-      email: state.user.email,
+      uid: uidValue,
+      displayName: profileSeed.displayName || "未命名用戶",
+      email: profileSeed.email || "",
       coins: 0,
       lastLoginAwardDate: null,
       lastCheckInDate: null,
+      role: profileSeed.role || "member",
       createdAt: new Date().toISOString(),
     },
     capsules: [],
@@ -367,7 +440,7 @@ function getUserBucket(store = readLocalStore()) {
     beneficiaries: [],
   };
 
-  return store.users[state.user.uid];
+  return store.users[uidValue];
 }
 
 async function initFirebase() {
@@ -432,6 +505,10 @@ function clearSessionState() {
   state.orders = [];
   state.notifications = [];
   state.cart = [];
+  state.adminUsers = [];
+  state.adminSelectedUserId = "";
+  state.adminEditingMessage = null;
+  state.heirMessages = [];
 }
 
 function startAuthenticatedSession(firebaseUser, message = "已登入 Google，正在同步雲端資料。") {
@@ -520,6 +597,11 @@ async function loadData() {
   state.capsules = bucket?.capsules || [];
   state.inheritances = bucket?.inheritances || [];
   state.beneficiaries = bucket?.beneficiaries || [];
+  state.adminUsers = getAdminUsersFromStore(store);
+  state.heirMessages = getHeirMessagesFromStore(store);
+  if (state.heirMessages.length && state.profile?.role !== "superAdmin") {
+    state.profile.role = "heir";
+  }
 }
 
 async function loadFirebaseData(syncId = state.authSyncId) {
@@ -569,12 +651,148 @@ async function loadFirebaseData(syncId = state.authSyncId) {
   state.beneficiaries = beneficiarySnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.orders = orderSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.notifications = [];
+  state.heirMessages = await loadFirebaseHeirMessages();
+  if (state.heirMessages.length && state.profile.role !== "superAdmin") {
+    state.profile.role = "heir";
+  }
+  state.adminUsers = state.profile.role === "superAdmin" ? await loadFirebaseAdminUsers() : [];
 
   await fb.setDoc(userRef, state.profile, { merge: true });
-  if (!settingsSnap.exists()) {
+  if (!settingsSnap.exists() && isSuperAdmin()) {
     await fb.setDoc(settingsRef, state.settings, { merge: true });
   }
   return true;
+}
+
+function getAdminUsersFromStore(store = readLocalStore()) {
+  return Object.entries(store.users || {}).map(([uidValue, bucket]) => ({
+    uid: uidValue,
+    profile: { uid: uidValue, ...(bucket.profile || {}) },
+    capsules: bucket.capsules || [],
+    inheritances: bucket.inheritances || [],
+    beneficiaries: bucket.beneficiaries || [],
+  }));
+}
+
+function getHeirMessagesFromCollections(access, ownerProfile, capsules = [], inheritances = []) {
+  const heirEmail = normalizeEmail(access.email || state.user?.email);
+  const ownerName = ownerProfile?.displayName || ownerProfile?.email || "未命名用戶";
+  const beneficiaryId = access.beneficiaryId || "";
+  const capsuleMessages = capsules
+    .filter((capsule) => (capsule.beneficiaryIds || []).includes(beneficiaryId))
+    .map((capsule) => {
+      const status = getCapsuleStatus(capsule);
+      return {
+        id: `capsule-${access.ownerUid}-${capsule.id}`,
+        type: "時光寶盒",
+        ownerName,
+        title: capsule.title,
+        status,
+        releaseLabel: getCapsuleUnlockLabel(capsule),
+        message: status === "locked" ? "此訊息尚未達開啟條件。" : capsule.message,
+        date: capsule.createdAt || capsule.unlockAt,
+      };
+    });
+
+  const legacyMessages = inheritances
+    .filter((item) => (item.heirs || []).some((heir) => heir.id === beneficiaryId || normalizeEmail(heir.email) === heirEmail))
+    .map((item) => {
+      const status = getLegacyStatus(item);
+      return {
+        id: `legacy-${access.ownerUid}-${item.id}`,
+        type: "數位繼承",
+        ownerName,
+        title: item.title,
+        status,
+        releaseLabel: item.releaseMode === "death" ? "確認離世後" : item.releaseDate,
+        message: status === "locked" ? "此訊息尚未達開啟條件。" : item.message,
+        date: item.createdAt || item.releaseDate,
+      };
+    });
+
+  return [...capsuleMessages, ...legacyMessages];
+}
+
+function getHeirMessagesFromStore(store = readLocalStore()) {
+  const email = normalizeEmail(state.user?.email);
+  if (!email) {
+    return [];
+  }
+  return (store.heirAccess || [])
+    .filter((access) => normalizeEmail(access.email) === email)
+    .flatMap((access) => {
+      const bucket = store.users?.[access.ownerUid];
+      if (!bucket) {
+        return [];
+      }
+      return getHeirMessagesFromCollections(access, bucket.profile, bucket.capsules || [], bucket.inheritances || []);
+    })
+    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+}
+
+async function loadFirebaseHeirMessages() {
+  const fb = state.firebase;
+  const email = normalizeEmail(state.user?.email);
+  if (!fb?.collectionGroup || !email) {
+    return [];
+  }
+
+  try {
+    const accessSnap = await fb.getDocs(fb.query(fb.collectionGroup(fb.db, "emails"), fb.where("email", "==", email)));
+    const messageGroups = await Promise.all(
+      accessSnap.docs.map(async (docSnap) => {
+        const access = docSnap.data();
+        const ownerUid = access.ownerUid || docSnap.ref.parent.parent?.id;
+        if (!ownerUid) {
+          return [];
+        }
+        const [ownerSnap, capsuleSnap, inheritanceSnap] = await Promise.all([
+          fb.getDoc(fb.doc(fb.db, "users", ownerUid)),
+          fb.getDocs(fb.collection(fb.db, "users", ownerUid, "capsules")),
+          fb.getDocs(fb.collection(fb.db, "users", ownerUid, "inheritances")),
+        ]);
+        return getHeirMessagesFromCollections(
+          { ...access, ownerUid },
+          ownerSnap.exists() ? ownerSnap.data() : { uid: ownerUid },
+          capsuleSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+          inheritanceSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+        );
+      }),
+    );
+    return messageGroups.flat().sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+  } catch (error) {
+    console.error(error);
+    return [];
+  }
+}
+
+async function loadFirebaseAdminUsers() {
+  const fb = state.firebase;
+  try {
+    const userSnap = await fb.getDocs(fb.collection(fb.db, "users"));
+    const users = await Promise.all(
+      userSnap.docs.map(async (userDoc) => {
+        const uidValue = userDoc.id;
+        const [capsuleSnap, inheritanceSnap, beneficiarySnap] = await Promise.all([
+          fb.getDocs(fb.collection(fb.db, "users", uidValue, "capsules")),
+          fb.getDocs(fb.collection(fb.db, "users", uidValue, "inheritances")),
+          fb.getDocs(fb.collection(fb.db, "users", uidValue, "beneficiaries")),
+        ]);
+        return {
+          uid: uidValue,
+          profile: { uid: uidValue, ...userDoc.data() },
+          capsules: capsuleSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+          inheritances: inheritanceSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+          beneficiaries: beneficiarySnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+        };
+      }),
+    );
+    return users.sort((a, b) => String(a.profile.email || "").localeCompare(String(b.profile.email || "")));
+  } catch (error) {
+    console.error(error);
+    setAuthNotice("最高管理員跨用戶資料讀取失敗，請確認 Firestore 規則已允許管理員讀寫。", "error");
+    return [];
+  }
 }
 
 async function saveLocalData() {
@@ -598,15 +816,40 @@ async function saveLocalData() {
   writeLocalStore(store);
 }
 
-async function persistCollectionItem(collectionName, item) {
+async function saveLocalCollectionItem(collectionName, item, ownerId = state.user?.uid) {
+  const store = readLocalStore();
+  if (["capsules", "inheritances", "beneficiaries"].includes(collectionName) && ownerId) {
+    const bucket = getUserBucketById(ownerId, store);
+    bucket[collectionName] = [
+      item,
+      ...(bucket[collectionName] || []).filter((existing) => existing.id !== item.id),
+    ];
+    writeLocalStore(store);
+    return;
+  }
+  await saveLocalData();
+}
+
+async function deleteLocalCollectionItem(collectionName, id, ownerId = state.user?.uid) {
+  const store = readLocalStore();
+  if (["capsules", "inheritances", "beneficiaries"].includes(collectionName) && ownerId) {
+    const bucket = getUserBucketById(ownerId, store);
+    bucket[collectionName] = (bucket[collectionName] || []).filter((item) => item.id !== id);
+    writeLocalStore(store);
+    return;
+  }
+  await saveLocalData();
+}
+
+async function persistCollectionItem(collectionName, item, ownerId = state.user?.uid) {
   if (state.mode === "firebase" && state.firebase && state.user) {
     const fb = state.firebase;
     if (collectionName === "capsules") {
-      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "capsules", item.id), item, { merge: true });
+      await fb.setDoc(fb.doc(fb.db, "users", ownerId, "capsules", item.id), item, { merge: true });
     } else if (collectionName === "inheritances") {
-      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "inheritances", item.id), item, { merge: true });
+      await fb.setDoc(fb.doc(fb.db, "users", ownerId, "inheritances", item.id), item, { merge: true });
     } else if (collectionName === "beneficiaries") {
-      await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "beneficiaries", item.id), item, { merge: true });
+      await fb.setDoc(fb.doc(fb.db, "users", ownerId, "beneficiaries", item.id), item, { merge: true });
     } else if (collectionName === "products") {
       await fb.setDoc(fb.doc(fb.db, "products", item.id), item, { merge: true });
     } else if (collectionName === "orders") {
@@ -615,18 +858,22 @@ async function persistCollectionItem(collectionName, item) {
       await fb.setDoc(fb.doc(fb.db, "notifications", item.id), item, { merge: true });
     }
     await fb.setDoc(fb.doc(fb.db, "users", state.user.uid), state.profile, { merge: true });
-    await fb.setDoc(fb.doc(fb.db, "platform", "settings"), state.settings, { merge: true });
+    if (isSuperAdmin()) {
+      await fb.setDoc(fb.doc(fb.db, "platform", "settings"), state.settings, { merge: true });
+    }
     return;
   }
 
-  await saveLocalData();
+  await saveLocalCollectionItem(collectionName, item, ownerId);
 }
 
 async function persistAll() {
   if (state.mode === "firebase" && state.firebase && state.user) {
     const fb = state.firebase;
     await fb.setDoc(fb.doc(fb.db, "users", state.user.uid), state.profile, { merge: true });
-    await fb.setDoc(fb.doc(fb.db, "platform", "settings"), state.settings, { merge: true });
+    if (isSuperAdmin()) {
+      await fb.setDoc(fb.doc(fb.db, "platform", "settings"), state.settings, { merge: true });
+    }
     for (const capsule of state.capsules) {
       await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "capsules", capsule.id), capsule, { merge: true });
     }
@@ -636,8 +883,10 @@ async function persistAll() {
     for (const beneficiary of state.beneficiaries) {
       await fb.setDoc(fb.doc(fb.db, "users", state.user.uid, "beneficiaries", beneficiary.id), beneficiary, { merge: true });
     }
-    for (const product of state.products) {
-      await fb.setDoc(fb.doc(fb.db, "products", product.id), product, { merge: true });
+    if (isSuperAdmin()) {
+      for (const product of state.products) {
+        await fb.setDoc(fb.doc(fb.db, "products", product.id), product, { merge: true });
+      }
     }
     for (const order of state.orders) {
       await fb.setDoc(fb.doc(fb.db, "orders", order.id), order, { merge: true });
@@ -650,18 +899,65 @@ async function persistAll() {
   await saveLocalData();
 }
 
-async function deleteRemoteItem(collectionName, id) {
+async function saveHeirAccess(beneficiary) {
+  const access = {
+    ownerUid: state.user.uid,
+    ownerName: state.profile?.displayName || state.user.displayName || "",
+    beneficiaryId: beneficiary.id,
+    name: beneficiary.name,
+    email: normalizeEmail(beneficiary.email),
+    relationship: beneficiary.relationship || "",
+    createdAt: beneficiary.createdAt || new Date().toISOString(),
+  };
+
+  if (state.mode === "firebase" && state.firebase && state.user) {
+    const fb = state.firebase;
+    await fb.setDoc(fb.doc(fb.db, "heirAccess", state.user.uid, "emails", access.email), access, { merge: true });
+    return;
+  }
+
+  const store = readLocalStore();
+  store.heirAccess = [
+    access,
+    ...(store.heirAccess || []).filter(
+      (item) => !(item.ownerUid === access.ownerUid && normalizeEmail(item.email) === access.email),
+    ),
+  ];
+  writeLocalStore(store);
+}
+
+async function deleteHeirAccess(beneficiary) {
+  const email = normalizeEmail(beneficiary?.email);
+  if (!email || !state.user) {
+    return;
+  }
+
+  if (state.mode === "firebase" && state.firebase) {
+    const fb = state.firebase;
+    await fb.deleteDoc(fb.doc(fb.db, "heirAccess", state.user.uid, "emails", email));
+    return;
+  }
+
+  const store = readLocalStore();
+  store.heirAccess = (store.heirAccess || []).filter(
+    (item) => !(item.ownerUid === state.user.uid && normalizeEmail(item.email) === email),
+  );
+  writeLocalStore(store);
+}
+
+async function deleteRemoteItem(collectionName, id, ownerId = state.user?.uid) {
   if (!(state.mode === "firebase" && state.firebase && state.user)) {
+    await deleteLocalCollectionItem(collectionName, id, ownerId);
     return;
   }
 
   const fb = state.firebase;
   if (collectionName === "capsules") {
-    await fb.deleteDoc(fb.doc(fb.db, "users", state.user.uid, "capsules", id));
+    await fb.deleteDoc(fb.doc(fb.db, "users", ownerId, "capsules", id));
   } else if (collectionName === "inheritances") {
-    await fb.deleteDoc(fb.doc(fb.db, "users", state.user.uid, "inheritances", id));
+    await fb.deleteDoc(fb.doc(fb.db, "users", ownerId, "inheritances", id));
   } else if (collectionName === "beneficiaries") {
-    await fb.deleteDoc(fb.doc(fb.db, "users", state.user.uid, "beneficiaries", id));
+    await fb.deleteDoc(fb.doc(fb.db, "users", ownerId, "beneficiaries", id));
   } else if (collectionName === "products") {
     await fb.deleteDoc(fb.doc(fb.db, "products", id));
   }
@@ -761,6 +1057,10 @@ async function logout() {
 }
 
 async function checkInForCoins() {
+  if (isHeirRole()) {
+    setAuthNotice("繼承人角色不累積時光幣；請使用一般會員帳號操作簽到。", "info");
+    return;
+  }
   if (!state.profile) {
     return;
   }
@@ -800,7 +1100,7 @@ function renderAuth() {
   const signedIn = Boolean(state.user);
   els.userChip.hidden = !signedIn;
   els.logoutButton.hidden = !signedIn;
-  els.checkInButton.hidden = !signedIn;
+  els.checkInButton.hidden = !signedIn || isHeirRole();
   els.checkInButton.disabled =
     signedIn && (state.profile?.lastCheckInDate === todayKey() || state.profile?.lastLoginAwardDate === todayKey());
   els.checkInButton.textContent = els.checkInButton.disabled ? "今日已簽到" : "立即簽到";
@@ -816,6 +1116,19 @@ function renderAuth() {
       : signedIn
         ? "目前已登入，暫用本機資料模式；雲端同步恢復後可重新整理再同步。"
         : "目前使用本機示範模式；填入 Firebase 設定後可啟用正式 Google 登入與雲端資料。";
+}
+
+function renderPermissions() {
+  const allowedViews = getAllowedViews();
+  const activeView = Array.from(els.views).find((view) => view.classList.contains("active"))?.id;
+
+  els.tabs.forEach((tab) => {
+    tab.hidden = !allowedViews.includes(tab.dataset.view);
+  });
+
+  if (!allowedViews.includes(activeView)) {
+    switchView(allowedViews[0], true);
+  }
 }
 
 function renderStats() {
@@ -960,24 +1273,26 @@ function renderShop() {
       button.className = "primary-button";
       button.type = "button";
       button.textContent = "加入購物車";
-      button.disabled = Number(product.stock) <= 0;
+      button.disabled = Number(product.stock) <= 0 || isHeirRole();
       button.addEventListener("click", () => addToCart(product.id));
       card.querySelector(".product-body").append(button);
 
-      const manage = document.createElement("div");
-      manage.className = "product-actions";
-      const edit = document.createElement("button");
-      edit.className = "secondary-button";
-      edit.type = "button";
-      edit.textContent = "修改";
-      edit.addEventListener("click", () => startProductEdit(product.id));
-      const remove = document.createElement("button");
-      remove.className = "secondary-button danger-button";
-      remove.type = "button";
-      remove.textContent = "刪除";
-      remove.addEventListener("click", () => deleteProduct(product.id));
-      manage.append(edit, remove);
-      card.querySelector(".product-body").append(manage);
+      if (isSuperAdmin()) {
+        const manage = document.createElement("div");
+        manage.className = "product-actions";
+        const edit = document.createElement("button");
+        edit.className = "secondary-button";
+        edit.type = "button";
+        edit.textContent = "修改";
+        edit.addEventListener("click", () => startProductEdit(product.id));
+        const remove = document.createElement("button");
+        remove.className = "secondary-button danger-button";
+        remove.type = "button";
+        remove.textContent = "刪除";
+        remove.addEventListener("click", () => deleteProduct(product.id));
+        manage.append(edit, remove);
+        card.querySelector(".product-body").append(manage);
+      }
 
       if (firstImage?.id) {
         getAssetUrl(firstImage.id).then((url) => {
@@ -1074,7 +1389,68 @@ function renderLegacy() {
   );
 }
 
+function renderHeirMessages() {
+  els.heirMessageList.replaceChildren(
+    ...(state.heirMessages.length
+      ? state.heirMessages.map((message) => {
+          const card = document.createElement("article");
+          card.className = "capsule-card";
+          card.dataset.tone = message.status === "locked" ? "amber" : "mint";
+          card.innerHTML = `
+            <div class="capsule-card-top">
+              <span class="status-pill ${message.status === "locked" ? "locked" : "ready"}">${message.status === "locked" ? "尚未開啟" : "可查看"}</span>
+            </div>
+            <h2>${escapeHtml(message.title)}</h2>
+            <p class="capsule-preview">${escapeHtml(message.message)}</p>
+            <dl class="capsule-meta">
+              <div><dt>設定用戶</dt><dd>${escapeHtml(message.ownerName)}</dd></div>
+              <div><dt>類型</dt><dd>${escapeHtml(message.type)}</dd></div>
+              <div><dt>開啟條件</dt><dd>${escapeHtml(message.releaseLabel || "未設定")}</dd></div>
+            </dl>
+          `;
+          return card;
+        })
+      : [
+          Object.assign(document.createElement("p"), {
+            className: "hint",
+            textContent: "目前尚未查到指定給您的繼承訊息。請確認設定者使用的是您的 Google 帳號信箱。",
+          }),
+        ]),
+  );
+}
+
 function renderAdmin() {
+  const adminEnabled = isSuperAdmin();
+  els.adminMessageSubmitButton.textContent = state.adminEditingMessage ? "儲存修改" : "新增訊息";
+  els.cancelAdminMessageEditButton.hidden = !state.adminEditingMessage;
+  els.adminUserSelect.disabled = !adminEnabled;
+  els.adminMessageForm.querySelectorAll("input, textarea, select, button").forEach((field) => {
+    field.disabled = !adminEnabled;
+  });
+  els.cancelAdminMessageEditButton.disabled = !adminEnabled;
+
+  const users = adminEnabled ? state.adminUsers : [];
+  if (users.length && !users.some((user) => user.uid === state.adminSelectedUserId)) {
+    state.adminSelectedUserId = users[0].uid;
+  }
+  if (!users.length) {
+    state.adminSelectedUserId = "";
+  }
+
+  els.adminUserSelect.replaceChildren(
+    ...(users.length
+      ? users.map((user) => {
+          const option = document.createElement("option");
+          option.value = user.uid;
+          option.textContent = `${user.profile.displayName || user.profile.email || "未命名用戶"}（${user.profile.email || user.uid}）`;
+          option.selected = user.uid === state.adminSelectedUserId;
+          return option;
+        })
+      : [Object.assign(document.createElement("option"), { value: "", textContent: "尚無可管理用戶" })]),
+  );
+
+  renderAdminUserMessages();
+
   for (const [key, value] of Object.entries(state.settings)) {
     const field = els.settingsForm.elements[key];
     if (field) {
@@ -1124,6 +1500,200 @@ function renderAdmin() {
   );
 }
 
+function getSelectedAdminUser() {
+  return state.adminUsers.find((user) => user.uid === state.adminSelectedUserId) || null;
+}
+
+function getAdminUserMessages(user = getSelectedAdminUser()) {
+  if (!user) {
+    return [];
+  }
+  return [
+    ...(user.capsules || []).map((item) => ({
+      collectionName: "capsules",
+      id: item.id,
+      title: item.title,
+      body: item.message,
+      date: item.createdAt || item.unlockAt,
+      typeLabel: "時光寶盒",
+    })),
+    ...(user.inheritances || []).map((item) => ({
+      collectionName: "inheritances",
+      id: item.id,
+      title: item.title,
+      body: item.message,
+      date: item.createdAt || item.releaseDate,
+      typeLabel: "數位繼承",
+    })),
+  ].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+}
+
+function renderAdminUserMessages() {
+  const user = getSelectedAdminUser();
+  const messages = getAdminUserMessages(user);
+  els.adminUserMessageList.replaceChildren(
+    ...(messages.length
+      ? messages.map((message) => {
+          const row = document.createElement("article");
+          row.className = "timeline-item";
+          row.innerHTML = `
+            <span class="mood-tag">${escapeHtml(message.typeLabel)}</span>
+            <h3>${escapeHtml(message.title)}</h3>
+            <p>${escapeHtml(message.body || "")}</p>
+            <time>${message.date ? formatDateTime(message.date) : "未設定日期"}</time>
+          `;
+          const actions = document.createElement("div");
+          actions.className = "product-actions";
+          const edit = document.createElement("button");
+          edit.className = "secondary-button";
+          edit.type = "button";
+          edit.textContent = "修改";
+          edit.addEventListener("click", () => startAdminMessageEdit(message.collectionName, message.id));
+          const remove = document.createElement("button");
+          remove.className = "secondary-button danger-button";
+          remove.type = "button";
+          remove.textContent = "刪除";
+          remove.addEventListener("click", () => deleteAdminMessage(message.collectionName, message.id));
+          actions.append(edit, remove);
+          row.append(actions);
+          return row;
+        })
+      : [
+          Object.assign(document.createElement("p"), {
+            className: "hint",
+            textContent: user ? "此用戶尚無訊息。" : "請先選擇用戶。",
+          }),
+        ]),
+  );
+}
+
+async function saveAdminMessage(event) {
+  event.preventDefault();
+  if (!requireSuperAdmin()) {
+    return;
+  }
+
+  const user = getSelectedAdminUser();
+  if (!user) {
+    alert("請先選擇要管理的用戶。");
+    return;
+  }
+
+  const formData = new FormData(els.adminMessageForm);
+  const collectionName = state.adminEditingMessage?.collectionName || formData.get("messageType");
+  const now = new Date().toISOString();
+  const existingList = collectionName === "capsules" ? user.capsules : user.inheritances;
+  const existing = state.adminEditingMessage
+    ? existingList.find((item) => item.id === state.adminEditingMessage.id)
+    : null;
+
+  const item =
+    collectionName === "capsules"
+      ? {
+          id: existing?.id || uid(),
+          title: formData.get("title").trim(),
+          recipient: "由最高管理員建立",
+          unlockAt: existing?.unlockAt || now,
+          releaseMode: existing?.releaseMode || "date",
+          beneficiaryIds: existing?.beneficiaryIds || [],
+          requiredConfirmations: existing?.requiredConfirmations || 0,
+          deathConfirmations: existing?.deathConfirmations || [],
+          deathConfirmedAt: existing?.deathConfirmedAt || null,
+          deathBufferDays: existing?.deathBufferDays || Number(state.settings.deathBufferDays) || 7,
+          mood: existing?.mood || "管理",
+          secret: existing?.secret || "",
+          message: formData.get("message").trim(),
+          videoUrl: existing?.videoUrl || "",
+          images: existing?.images || [],
+          files: existing?.files || [],
+          tone: existing?.tone || "mint",
+          createdAt: existing?.createdAt || now,
+          updatedAt: now,
+          openedAt: existing?.openedAt || null,
+        }
+      : {
+          id: existing?.id || uid(),
+          title: formData.get("title").trim(),
+          heirs: existing?.heirs || [],
+          releaseMode: existing?.releaseMode || "date",
+          releaseDate: existing?.releaseDate || todayKey(),
+          message: formData.get("message").trim(),
+          deathConfirmedAt: existing?.deathConfirmedAt || null,
+          createdAt: existing?.createdAt || now,
+          updatedAt: now,
+        };
+
+  if (collectionName === "capsules") {
+    user.capsules = [item, ...(user.capsules || []).filter((message) => message.id !== item.id)];
+    if (user.uid === state.user.uid) {
+      state.capsules = [item, ...state.capsules.filter((message) => message.id !== item.id)];
+    }
+  } else {
+    user.inheritances = [item, ...(user.inheritances || []).filter((message) => message.id !== item.id)];
+    if (user.uid === state.user.uid) {
+      state.inheritances = [item, ...state.inheritances.filter((message) => message.id !== item.id)];
+    }
+  }
+
+  await persistCollectionItem(collectionName, item, user.uid);
+  state.adminEditingMessage = null;
+  els.adminMessageForm.reset();
+  render();
+}
+
+function startAdminMessageEdit(collectionName, id) {
+  if (!requireSuperAdmin()) {
+    return;
+  }
+  const user = getSelectedAdminUser();
+  const item = (collectionName === "capsules" ? user?.capsules : user?.inheritances)?.find((message) => message.id === id);
+  if (!item) {
+    return;
+  }
+
+  state.adminEditingMessage = { collectionName, id };
+  els.adminMessageForm.elements.messageType.value = collectionName;
+  els.adminMessageForm.elements.title.value = item.title || "";
+  els.adminMessageForm.elements.message.value = item.message || "";
+  renderAdmin();
+  els.adminMessageForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function cancelAdminMessageEdit() {
+  state.adminEditingMessage = null;
+  els.adminMessageForm.reset();
+  renderAdmin();
+}
+
+async function deleteAdminMessage(collectionName, id) {
+  if (!requireSuperAdmin()) {
+    return;
+  }
+  const user = getSelectedAdminUser();
+  if (!user || !confirm("刪除此用戶訊息？")) {
+    return;
+  }
+
+  if (collectionName === "capsules") {
+    user.capsules = (user.capsules || []).filter((message) => message.id !== id);
+    if (user.uid === state.user.uid) {
+      state.capsules = state.capsules.filter((message) => message.id !== id);
+    }
+  } else {
+    user.inheritances = (user.inheritances || []).filter((message) => message.id !== id);
+    if (user.uid === state.user.uid) {
+      state.inheritances = state.inheritances.filter((message) => message.id !== id);
+    }
+  }
+
+  await deleteRemoteItem(collectionName, id, user.uid);
+  if (state.adminEditingMessage?.id === id) {
+    state.adminEditingMessage = null;
+    els.adminMessageForm.reset();
+  }
+  render();
+}
+
 function updateCapsuleReleaseControls() {
   const isDeathMode = els.capsuleReleaseModeInput.value === "death";
   const selectedCount = selectedValues(els.capsuleBeneficiaryInput).length;
@@ -1142,11 +1712,13 @@ function updateCapsuleReleaseControls() {
 
 function render() {
   renderAuth();
+  renderPermissions();
   renderStats();
   renderBeneficiaries();
   renderCapsules();
   renderShop();
   renderLegacy();
+  renderHeirMessages();
   renderAdmin();
 }
 
@@ -1161,7 +1733,7 @@ function resetFormDefaults() {
 
 async function addCapsule(event) {
   event.preventDefault();
-  if (!requireLogin()) {
+  if (!requireStandardUser()) {
     return;
   }
 
@@ -1325,7 +1897,7 @@ async function confirmUnlock() {
 }
 
 function addToCart(productId) {
-  if (!requireLogin()) {
+  if (!requireStandardUser()) {
     return;
   }
 
@@ -1350,7 +1922,7 @@ function removeFromCart(productId) {
 
 async function addBeneficiary(event) {
   event.preventDefault();
-  if (!requireLogin()) {
+  if (!requireStandardUser()) {
     return;
   }
 
@@ -1376,6 +1948,7 @@ async function addBeneficiary(event) {
     createdAt: new Date().toISOString(),
   });
   await persistCollectionItem("beneficiaries", beneficiary);
+  await saveHeirAccess(beneficiary);
   await persistAll();
   els.beneficiaryForm.reset();
   render();
@@ -1388,14 +1961,16 @@ async function deleteBeneficiary(id) {
   if (!confirm("刪除此繼承人？既有寶盒中的指定紀錄不會被自動移除。")) {
     return;
   }
+  const beneficiary = state.beneficiaries.find((item) => item.id === id);
   state.beneficiaries = state.beneficiaries.filter((item) => item.id !== id);
   await deleteRemoteItem("beneficiaries", id);
+  await deleteHeirAccess(beneficiary);
   await saveLocalData();
   render();
 }
 
 async function checkout() {
-  if (!requireLogin() || state.cart.length === 0) {
+  if (!requireStandardUser() || state.cart.length === 0) {
     return;
   }
 
@@ -1442,7 +2017,7 @@ async function checkout() {
 
 async function addInheritance(event) {
   event.preventDefault();
-  if (!requireLogin()) {
+  if (!requireStandardUser()) {
     return;
   }
 
@@ -1508,6 +2083,10 @@ async function deleteInheritance(id) {
 
 async function saveSettings(event) {
   event.preventDefault();
+  if (!requireSuperAdmin()) {
+    return;
+  }
+  const canWriteSettings = isSuperAdmin();
   const formData = new FormData(els.settingsForm);
   state.settings = {
     dailyLoginCoins: Number(formData.get("dailyLoginCoins")) || 0,
@@ -1521,13 +2100,22 @@ async function saveSettings(event) {
   if (state.profile) {
     state.profile.role = state.settings.currentUserRole;
   }
-  await persistAll();
+  if (state.mode === "firebase" && state.firebase && state.user && canWriteSettings) {
+    const fb = state.firebase;
+    await fb.setDoc(fb.doc(fb.db, "users", state.user.uid), state.profile, { merge: true });
+    await fb.setDoc(fb.doc(fb.db, "platform", "settings"), state.settings, { merge: true });
+  } else {
+    await persistAll();
+  }
   render();
   alert("設定已儲存。");
 }
 
 async function addProduct(event) {
   event.preventDefault();
+  if (!requireSuperAdmin()) {
+    return;
+  }
   const formData = new FormData(els.productForm);
   const existingProduct = state.products.find((product) => product.id === state.editingProductId);
   const imageFiles = formData.getAll("productImages").filter((file) => file.size);
@@ -1567,6 +2155,9 @@ async function addProduct(event) {
 }
 
 function startProductEdit(id) {
+  if (!requireSuperAdmin()) {
+    return;
+  }
   const product = state.products.find((item) => item.id === id);
   if (!product) {
     return;
@@ -1591,6 +2182,9 @@ function cancelProductEdit() {
 }
 
 async function deleteProduct(id) {
+  if (!requireSuperAdmin()) {
+    return;
+  }
   const product = state.products.find((item) => item.id === id);
   if (!product || !confirm(`刪除商品「${product.name}」？`)) {
     return;
@@ -1607,7 +2201,7 @@ async function deleteProduct(id) {
 }
 
 async function confirmDeathForCurrentUser() {
-  if (!requireLogin()) {
+  if (!requireSuperAdmin()) {
     return;
   }
 
@@ -1660,7 +2254,11 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function switchView(viewId) {
+function switchView(viewId, force = false) {
+  if (!force && !getAllowedViews().includes(viewId)) {
+    setAuthNotice("此角色無法使用該功能。", "info");
+    return;
+  }
   els.tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.view === viewId));
   els.views.forEach((view) => view.classList.toggle("active", view.id === viewId));
 }
@@ -1701,6 +2299,14 @@ function wireEvents() {
   els.settingsForm.addEventListener("submit", saveSettings);
   els.productForm.addEventListener("submit", addProduct);
   els.cancelProductEditButton.addEventListener("click", cancelProductEdit);
+  els.adminUserSelect.addEventListener("change", (event) => {
+    state.adminSelectedUserId = event.target.value;
+    state.adminEditingMessage = null;
+    els.adminMessageForm.reset();
+    renderAdmin();
+  });
+  els.adminMessageForm.addEventListener("submit", saveAdminMessage);
+  els.cancelAdminMessageEditButton.addEventListener("click", cancelAdminMessageEdit);
   els.confirmDeathButton.addEventListener("click", confirmDeathForCurrentUser);
 }
 
