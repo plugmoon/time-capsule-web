@@ -13,6 +13,21 @@
 4. 將 config 貼到 `firebase-config.js`。
 5. 在 Authentication 的 Authorized domains 加入正式網域，例如 `plugmoon.github.io`。
 
+## 啟用 Cloud Firestore
+
+正式雲端同步需要先啟用 Cloud Firestore API 並建立 Firestore Database。
+
+1. 前往 Firebase Console 的 Firestore Database：
+   https://console.firebase.google.com/project/time-capsule-web/firestore
+2. 按「建立資料庫」或「Create database」。
+3. 選 Production mode。
+4. 建立完成後切到 Rules。
+5. 將專案根目錄的 `firestore.rules` 完整貼上並發布。
+
+若 Google API 回覆 `Cloud Firestore API has not been used... or it is disabled`，代表 API 尚未啟用。請先前往以下網址按 Enable：
+
+https://console.developers.google.com/apis/api/firestore.googleapis.com/overview?project=time-capsule-web
+
 Firebase 官方文件：
 
 - Google 登入：https://firebase.google.com/docs/auth/web/google-signin
