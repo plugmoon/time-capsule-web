@@ -9,7 +9,7 @@
     />
     <title>時光寶盒</title>
     <link rel="icon" href="assets/time-capsule.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20260530-admin-doc" />
+    <link rel="stylesheet" href="styles.css?v=20260530-profile-privacy" />
   </head>
   <body>
     <div class="app-shell">
@@ -20,11 +20,11 @@
         </a>
 
         <div class="auth-panel" aria-label="會員登入">
-          <div class="user-chip" id="userChip" hidden>
+          <button class="user-chip" id="userChip" type="button" hidden title="編輯個人資料">
             <span class="avatar" id="userAvatar">時</span>
             <span id="userName">訪客</span>
             <strong><span id="coinBalance">0</span> 幣</strong>
-          </div>
+          </button>
           <button class="primary-button" id="checkInButton" type="button" hidden>立即簽到</button>
           <button class="secondary-button" id="googleLoginButton" type="button">Google 登入</button>
           <button class="icon-button" id="logoutButton" type="button" title="登出" aria-label="登出" hidden>↪</button>
@@ -314,7 +314,8 @@
           <div class="admin-grid">
             <section class="composer-panel admin-card admin-wide">
               <div class="panel-heading">
-                <h2>用戶訊息管理</h2>
+                <h2>數位繼承訊息管理</h2>
+                <span class="hint">最高管理員不可瀏覽或修改用戶的個人時光寶盒。</span>
               </div>
               <form id="adminMessageForm" class="capsule-form admin-message-form">
                 <label>
@@ -324,7 +325,6 @@
                 <label>
                   <span>訊息類型</span>
                   <select name="messageType">
-                    <option value="capsules">時光寶盒</option>
                     <option value="inheritances">數位繼承</option>
                   </select>
                 </label>
@@ -460,6 +460,49 @@
       </form>
     </dialog>
 
+    <dialog id="profileDialog" class="unlock-dialog">
+      <form method="dialog" id="profileForm" class="capsule-form">
+        <div class="panel-heading">
+          <h2>個人資料</h2>
+          <button class="ghost-icon" value="cancel" type="submit" title="關閉" aria-label="關閉個人資料">×</button>
+        </div>
+        <p class="hint">購物或通知繼承人前，需先完成真實姓名、電話與地址。</p>
+        <label>
+          <span>真實姓名</span>
+          <input name="realName" type="text" maxlength="60" autocomplete="name" />
+        </label>
+        <label>
+          <span>暱稱</span>
+          <input name="nickname" type="text" maxlength="40" required />
+        </label>
+        <label>
+          <span>Email</span>
+          <input name="email" type="email" required autocomplete="email" />
+        </label>
+        <label>
+          <span>聯絡電話</span>
+          <input name="phone" type="tel" maxlength="30" autocomplete="tel" />
+        </label>
+        <label>
+          <span>地址</span>
+          <input name="address" type="text" maxlength="160" autocomplete="street-address" />
+        </label>
+        <label>
+          <span>緊急聯絡人姓名</span>
+          <input name="emergencyContactName" type="text" maxlength="60" required />
+        </label>
+        <label>
+          <span>緊急聯絡人電話</span>
+          <input name="emergencyContactPhone" type="tel" maxlength="30" required />
+        </label>
+        <p id="profileError" class="form-error" hidden></p>
+        <div class="dialog-actions">
+          <button class="secondary-button" value="cancel" type="submit">取消</button>
+          <button class="primary-button" id="saveProfileButton" type="button">儲存</button>
+        </div>
+      </form>
+    </dialog>
+
     <template id="capsuleTemplate">
       <article class="capsule-card">
         <div class="capsule-card-top">
@@ -485,7 +528,7 @@
       </article>
     </template>
 
-    <script src="firebase-config.js?v=20260530-admin-doc"></script>
-    <script src="app.js?v=20260530-admin-doc"></script>
+    <script src="firebase-config.js?v=20260530-profile-privacy"></script>
+    <script src="app.js?v=20260530-profile-privacy"></script>
   </body>
 </html>
