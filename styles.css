@@ -775,6 +775,19 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.admin-message-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-message-form label:has(textarea),
+.admin-message-form .form-actions {
+  grid-column: 1 / -1;
+}
+
+.admin-message-list {
+  margin-top: 18px;
+}
+
 .list-heading {
   align-items: start;
 }
