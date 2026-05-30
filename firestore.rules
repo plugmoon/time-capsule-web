@@ -28,8 +28,7 @@ service cloud.firestore {
       allow read, write: if owns(uid) || isSuperAdmin();
 
       match /capsules/{capsuleId} {
-        allow read: if owns(uid) || isSuperAdmin() || isHeirFor(uid);
-        allow write: if owns(uid) || isSuperAdmin();
+        allow read, write: if owns(uid);
       }
 
       match /inheritances/{inheritanceId} {
