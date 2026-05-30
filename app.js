@@ -633,8 +633,10 @@ async function loadFirebaseData(syncId = state.authSyncId) {
   const fb = state.firebase;
   const userId = state.user.uid;
   const userRef = fb.doc(fb.db, "users", userId);
+  const adminRef = fb.doc(fb.db, "admins", userId);
   const settingsRef = fb.doc(fb.db, "platform", "settings");
   const [
+    adminSnap,
     profileSnap,
     settingsSnap,
     productSnap,
@@ -644,6 +646,7 @@ async function loadFirebaseData(syncId = state.authSyncId) {
     orderSnap,
   ] =
     await Promise.all([
+      fb.getDoc(adminRef),
       fb.getDoc(userRef),
       fb.getDoc(settingsRef),
       fb.getDocs(fb.collection(fb.db, "products")),
@@ -669,6 +672,9 @@ async function loadFirebaseData(syncId = state.authSyncId) {
         role: state.settings.currentUserRole || "member",
         createdAt: new Date().toISOString(),
       };
+  if (adminSnap.exists()) {
+    state.profile.role = "superAdmin";
+  }
   state.settings = settingsSnap.exists() ? { ...DEFAULT_SETTINGS, ...settingsSnap.data() } : { ...DEFAULT_SETTINGS };
   state.products = productSnap.empty ? DEFAULT_PRODUCTS : productSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.capsules = capsuleSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
