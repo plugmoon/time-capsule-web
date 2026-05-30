@@ -53,17 +53,13 @@ service cloud.firestore {
 
     match /orders/{orderId} {
       allow create: if isSuperAdmin()
-        || (signedIn() && request.resource.data.userId == request.auth.uid)
-        || (!signedIn()
-          && request.resource.data.userId is string
-          && request.resource.data.userId.matches('guest-.*')
-          && request.resource.data.usedCoins == 0);
+        || (signedIn() && request.resource.data.userId == request.auth.uid);
       allow read: if isSuperAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
       allow update, delete: if isSuperAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
     }
 
     match /notifications/{notificationId} {
-      allow create: if signedIn() || request.resource.data.userId == "guest";
+      allow create: if signedIn();
       allow read: if signedIn();
       allow update, delete: if isSuperAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
     }
