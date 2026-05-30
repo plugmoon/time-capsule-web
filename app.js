@@ -5,6 +5,7 @@ const FIREBASE_READY = !DEMO_MODE && Boolean(FIREBASE_CONFIG.apiKey && !String(F
 const MB = 1024 * 1024;
 const MAX_IMAGE_SIZE = 10 * MB;
 const MAX_FILE_SIZE = 100 * MB;
+const FIRESTORE_SYNC_TIMEOUT_MS = 4500;
 
 const DEFAULT_SETTINGS = {
   dailyLoginCoins: 10,
@@ -69,6 +70,7 @@ const state = {
   category: "all",
   activeCapsuleId: null,
   editingProductId: null,
+  authSyncId: 0,
 };
 
 const els = {
@@ -398,8 +400,35 @@ function setAuthNotice(message, level = "info") {
   els.authNotice.className = `auth-notice ${level}`.trim();
 }
 
+function createProfileFromAuthUser(user) {
+  return {
+    uid: user.uid,
+    displayName: user.displayName,
+    email: user.email,
+    coins: state.profile?.coins || 0,
+    lastLoginAwardDate: state.profile?.lastLoginAwardDate || null,
+    lastCheckInDate: state.profile?.lastCheckInDate || null,
+    role: state.profile?.role || state.settings.currentUserRole || "member",
+    createdAt: state.profile?.createdAt || new Date().toISOString(),
+  };
+}
+
+function withTimeout(promise, ms, code) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      const error = new Error(code);
+      error.code = code;
+      reject(error);
+    }, ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId));
+}
+
 function getFirebaseFriendlyError(error, provider = "") {
   const code = error?.code || "";
+  const detail = String(error?.message || "");
   const providerName = provider === "google" ? "Google" : "Firebase";
 
   const messages = {
@@ -417,7 +446,15 @@ function getFirebaseFriendlyError(error, provider = "") {
     return messages[code];
   }
 
-  if (String(error?.message || "").includes("permission-denied")) {
+  if (code === "firestore-timeout") {
+    return "Firestore 同步等待時間過久，系統已先顯示帳號並改用本機資料。請確認 Firestore Database 已建立、規則已發布，或稍後重新整理再試。";
+  }
+
+  if (code === "unavailable" || detail.includes("unavailable")) {
+    return "Firestore 目前無法連線。請確認 Firestore Database 已建立、網路正常，並已套用 firestore.rules。";
+  }
+
+  if (detail.includes("permission-denied")) {
     return "Firestore 權限不足。請確認已建立 Firestore Database，並套用 firestore.rules。";
   }
 
@@ -443,9 +480,10 @@ async function loadData() {
   state.beneficiaries = bucket?.beneficiaries || [];
 }
 
-async function loadFirebaseData() {
+async function loadFirebaseData(syncId = state.authSyncId) {
   const fb = state.firebase;
-  const userRef = fb.doc(fb.db, "users", state.user.uid);
+  const userId = state.user.uid;
+  const userRef = fb.doc(fb.db, "users", userId);
   const settingsRef = fb.doc(fb.db, "platform", "settings");
   const [
     profileSnap,
@@ -455,23 +493,25 @@ async function loadFirebaseData() {
     inheritanceSnap,
     beneficiarySnap,
     orderSnap,
-    notificationSnap,
   ] =
     await Promise.all([
       fb.getDoc(userRef),
       fb.getDoc(settingsRef),
       fb.getDocs(fb.collection(fb.db, "products")),
-      fb.getDocs(fb.collection(fb.db, "users", state.user.uid, "capsules")),
-      fb.getDocs(fb.collection(fb.db, "users", state.user.uid, "inheritances")),
-      fb.getDocs(fb.collection(fb.db, "users", state.user.uid, "beneficiaries")),
-      fb.getDocs(fb.query(fb.collection(fb.db, "orders"), fb.where("userId", "==", state.user.uid))),
-      fb.getDocs(fb.collection(fb.db, "notifications")),
+      fb.getDocs(fb.collection(fb.db, "users", userId, "capsules")),
+      fb.getDocs(fb.collection(fb.db, "users", userId, "inheritances")),
+      fb.getDocs(fb.collection(fb.db, "users", userId, "beneficiaries")),
+      fb.getDocs(fb.query(fb.collection(fb.db, "orders"), fb.where("userId", "==", userId))),
     ]);
+
+  if (syncId !== state.authSyncId || state.user?.uid !== userId) {
+    return false;
+  }
 
   state.profile = profileSnap.exists()
     ? { lastCheckInDate: null, ...profileSnap.data() }
     : {
-        uid: state.user.uid,
+        uid: userId,
         displayName: state.user.displayName,
         email: state.user.email,
         coins: 0,
@@ -486,12 +526,13 @@ async function loadFirebaseData() {
   state.inheritances = inheritanceSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.beneficiaries = beneficiarySnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   state.orders = orderSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-  state.notifications = notificationSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  state.notifications = [];
 
   await fb.setDoc(userRef, state.profile, { merge: true });
   if (!settingsSnap.exists()) {
     await fb.setDoc(settingsRef, state.settings, { merge: true });
   }
+  return true;
 }
 
 async function saveLocalData() {
@@ -618,6 +659,33 @@ async function login(provider) {
   render();
 }
 
+async function hydrateFirebaseDataAfterLogin(syncId, userId) {
+  try {
+    state.mode = "firebase";
+    await withTimeout(loadFirebaseData(syncId), FIRESTORE_SYNC_TIMEOUT_MS, "firestore-timeout");
+    if (syncId !== state.authSyncId || state.user?.uid !== userId) {
+      return;
+    }
+    setAuthNotice("登入成功，已連接 Firebase 雲端資料。", "success");
+  } catch (error) {
+    if (syncId !== state.authSyncId || state.user?.uid !== userId) {
+      return;
+    }
+    console.error(error);
+    state.authSyncId += 1;
+    state.mode = "local";
+    await loadData();
+    if (!state.profile) {
+      state.profile = createProfileFromAuthUser(state.user);
+    }
+    setAuthNotice(`${getFirebaseFriendlyError(error)} 目前已先登入並暫用本機資料模式。`, "error");
+  } finally {
+    if (state.user?.uid === userId) {
+      render();
+    }
+  }
+}
+
 async function logout() {
   if (state.mode === "firebase" && state.firebase) {
     await state.firebase.signOut(state.firebase.auth);
@@ -685,7 +753,9 @@ function renderAuth() {
   els.runtimeMode.textContent =
     state.mode === "firebase"
       ? "目前使用 Firebase Authentication / Firestore 雲端模式。"
-      : "目前使用本機示範模式；填入 Firebase 設定後可啟用正式 Google 登入與雲端資料。";
+      : signedIn
+        ? "目前已登入，暫用本機資料模式；雲端同步恢復後可重新整理再同步。"
+        : "目前使用本機示範模式；填入 Firebase 設定後可啟用正式 Google 登入與雲端資料。";
 }
 
 function renderStats() {
@@ -1584,7 +1654,9 @@ async function start() {
       .getRedirectResult(state.firebase.auth)
       .catch((error) => setAuthNotice(getFirebaseFriendlyError(error), "error"));
 
-    state.firebase.onAuthStateChanged(state.firebase.auth, async (user) => {
+    state.firebase.onAuthStateChanged(state.firebase.auth, (user) => {
+      const syncId = state.authSyncId + 1;
+      state.authSyncId = syncId;
       state.mode = "firebase";
       state.user = user
         ? {
@@ -1595,34 +1667,18 @@ async function start() {
           }
         : null;
       if (state.user) {
-        state.profile = {
-          uid: state.user.uid,
-          displayName: state.user.displayName,
-          email: state.user.email,
-          coins: state.profile?.coins || 0,
-          lastLoginAwardDate: state.profile?.lastLoginAwardDate || null,
-          lastCheckInDate: state.profile?.lastCheckInDate || null,
-          role: state.profile?.role || state.settings.currentUserRole || "member",
-          createdAt: state.profile?.createdAt || new Date().toISOString(),
-        };
-
-        try {
-          await loadData();
-          setAuthNotice("登入成功，已連接 Firebase 雲端資料。", "success");
-        } catch (error) {
-          console.error(error);
-          state.mode = "local";
-          await loadData();
-          setAuthNotice(
-            `${getFirebaseFriendlyError(error)} 目前已先登入並暫用本機資料模式。`,
-            "error",
-          );
-        }
+        state.profile = createProfileFromAuthUser(state.user);
+        render();
+        setAuthNotice("已登入 Google，正在同步雲端資料。", "info");
+        hydrateFirebaseDataAfterLogin(syncId, state.user.uid);
+        return;
       } else {
         state.profile = null;
         state.capsules = [];
         state.inheritances = [];
+        state.beneficiaries = [];
         state.orders = [];
+        state.notifications = [];
         state.cart = [];
       }
       render();
