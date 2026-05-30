@@ -26,4 +26,21 @@
 4. 啟用 Facebook 需要先到 Meta for Developers 建立 Facebook App，取得 App ID 與 App Secret。
 5. 在 Authentication 的 Authorized domains 加入：`plugmoon.github.io`。
 
+## 啟用 Cloud Firestore
+
+目前線上 App 需要 Cloud Firestore 儲存會員資料、時光寶盒、繼承人、商城商品與訂單。
+
+1. 到 Firebase Console：https://console.firebase.google.com/project/time-capsule-web/firestore
+2. 左側選 Build > Firestore Database。
+3. 按「建立資料庫」或「Create database」。
+4. 位置可選 `asia-east1` 或離主要使用者最近的位置。
+5. 安全規則模式先選 Production mode。
+6. 建立完成後，進入 Rules。
+7. 將專案內 `firestore.rules` 的內容完整貼上。
+8. 按「發布」或「Publish」。
+
+如果看到 `Cloud Firestore API has not been used... or it is disabled`，請先打開以下網址並按 Enable：
+
+https://console.developers.google.com/apis/api/firestore.googleapis.com/overview?project=time-capsule-web
+
 Firebase 官方文件說明，Web App 註冊後會取得 Firebase configuration object，用來連接 Firebase 專案資源。
