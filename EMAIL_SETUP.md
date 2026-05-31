@@ -24,3 +24,12 @@
 ## 常見錯誤
 
 如果畫面顯示「Firestore 規則尚未允許寫入 mail 集合」，請先到 Firestore Database > Rules，貼上本專案最新的 `firestore.rules` 並按「發布」。GitHub Pages 上傳規則檔不等於 Firebase 已套用規則，Firebase Console 仍需要另外發布一次。
+
+如果畫面顯示「尚未偵測到 Firebase Trigger Email 擴充功能處理紀錄」，代表文件已經寫入 `mail` 集合，但擴充功能沒有接手處理。請檢查：
+
+1. Extensions 是否已安裝 `Trigger Email from Firestore`。
+2. 安裝時的 Email documents collection 是否填 `mail`。
+3. SMTP 帳號、密碼、寄件人地址是否正確。
+4. Firebase 專案是否已升級到可使用 Extensions / Cloud Functions 的方案。
+
+擴充功能處理後，會在 `mail/{文件ID}` 加上 `delivery` 欄位。`delivery.state` 可能是 `PENDING`、`PROCESSING`、`SUCCESS` 或 `ERROR`。
