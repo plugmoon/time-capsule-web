@@ -216,7 +216,6 @@ function getNotificationChannelLabel(channel) {
   return {
     email: "Email",
     sms: "簡訊",
-    line: "Line",
   }[channel] || channel;
 }
 
@@ -267,14 +266,6 @@ function createNotificationLink(channel, beneficiary, notice) {
     return {
       href: `sms:${encodeURIComponent(beneficiary.phone)}?&body=${encodeURIComponent(notice.body)}`,
       label: "開啟簡訊草稿",
-      channelLabel: label,
-    };
-  }
-
-  if (channel === "line") {
-    return {
-      href: `https://line.me/R/msg/text/?${encodeURIComponent(`${notice.subject}\n\n${notice.body}`)}`,
-      label: "開啟 Line 分享",
       channelLabel: label,
     };
   }
@@ -1092,7 +1083,6 @@ async function saveHeirAccess(beneficiary) {
     name: beneficiary.name,
     email: normalizeEmail(beneficiary.email),
     phone: beneficiary.phone || "",
-    lineId: beneficiary.lineId || "",
     relationship: beneficiary.relationship || "",
     createdAt: beneficiary.createdAt || new Date().toISOString(),
   };
@@ -1501,8 +1491,7 @@ function renderBeneficiaries() {
               <span>${escapeHtml(beneficiary.email)}</span>
               <span>${escapeHtml([
                 beneficiary.phone ? `手機：${beneficiary.phone}` : "",
-                beneficiary.lineId ? `Line：${beneficiary.lineId}` : "",
-              ].filter(Boolean).join("｜") || "尚未設定手機或 Line")}</span>
+              ].filter(Boolean).join("｜") || "尚未設定手機")}</span>
             </div>
             <small>${escapeHtml(beneficiary.relationship || "未設定關係")}</small>
           `;
@@ -2063,7 +2052,7 @@ function showNotificationLinkDialog(links, skipped = []) {
   title.textContent = "繼承人通知";
   const hint = document.createElement("p");
   hint.className = "hint";
-  hint.textContent = "請點選下方連結開啟通知草稿或分享視窗，再送出給繼承人。";
+  hint.textContent = "請點選下方連結開啟 Email 或簡訊通知草稿，再送出給繼承人。";
   form.append(title, hint);
 
   if (links.length) {
@@ -2141,6 +2130,161 @@ async function notifyCapsuleHeirs(capsule, channels) {
   }
 
   showNotificationLinkDialog(links, skipped);
+}
+
+function createEmailHtml(text) {
+  return escapeHtml(text)
+    .split("\n")
+    .map((line) => (line ? line : "&nbsp;"))
+    .join("<br>");
+}
+
+function createBeneficiaryMailto(beneficiary, subject, body) {
+  return `mailto:${encodeURIComponent(beneficiary.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function buildBeneficiaryEmailNotice(beneficiary) {
+  const senderName = state.profile?.realName || getProfileDisplayName();
+  const subject = "您已被設定為時光寶盒繼承人";
+  const body = [
+    `${beneficiary.name} 您好：`,
+    "",
+    `${senderName} 已將您設定為時光寶盒的繼承人。`,
+    "未來若有指定給您的時光寶盒或數位繼承訊息，系統會依照設定條件讓您查看。",
+    "",
+    `請前往 ${getSiteUrl()} 使用 Google 登入或註冊，並使用此 Email 帳號登入，系統才能辨識您的繼承人身分。`,
+    "",
+    "此通知僅代表您已被指定為繼承人，實際可查看內容仍需符合設定者指定的開啟條件。",
+  ].join("\n");
+  return { subject, body };
+}
+
+async function sendBeneficiaryEmail(beneficiary, subject, body) {
+  const email = normalizeEmail(beneficiary.email);
+  if (!email) {
+    alert("此繼承人尚未設定 Email。");
+    return;
+  }
+
+  const mailto = createBeneficiaryMailto(beneficiary, subject, body);
+  const now = new Date().toISOString();
+
+  if (!(state.mode === "firebase" && state.firebase && state.user)) {
+    window.location.href = mailto;
+    setAuthNotice("目前未連線 Firebase，已改用 Email 草稿方式通知。", "info");
+    return;
+  }
+
+  const fb = state.firebase;
+  const mailId = uid();
+  const replyTo = state.profile?.email || state.user?.email || "";
+  const mail = {
+    id: mailId,
+    userId: state.user.uid,
+    beneficiaryId: beneficiary.id,
+    to: [email],
+    message: {
+      subject,
+      text: body,
+      html: createEmailHtml(body),
+    },
+    createdAt: now,
+    source: "beneficiary-notice",
+  };
+  if (replyTo) {
+    mail.replyTo = replyTo;
+  }
+
+  try {
+    await fb.setDoc(fb.doc(fb.db, "mail", mailId), mail);
+    const notification = {
+      id: uid(),
+      type: "heir-email",
+      userId: state.user.uid,
+      beneficiaryId: beneficiary.id,
+      message: `已將繼承人 Email 通知排入寄送：${beneficiary.name}（${email}）`,
+      link: mailto,
+      linkLabel: "開啟備援 Email 草稿",
+      createdAt: now,
+    };
+    state.notifications.unshift(notification);
+    await persistCollectionItem("notifications", notification);
+    setAuthNotice("Email 通知已送出寄送佇列；若 Firebase Trigger Email 擴充功能已啟用，系統會自動寄出。", "success");
+  } catch (error) {
+    console.error(error);
+    if (confirm("Email 寄送佇列建立失敗。是否改用 Email 草稿通知？")) {
+      window.location.href = mailto;
+    }
+    setAuthNotice("Email 寄送佇列建立失敗，請確認 Firestore 規則已發布，並已安裝 Firebase Trigger Email 擴充功能。", "error");
+  }
+}
+
+function showBeneficiaryEmailDialog(beneficiary) {
+  document.querySelector("#beneficiaryEmailDialog")?.remove();
+  const notice = buildBeneficiaryEmailNotice(beneficiary);
+  const dialog = document.createElement("dialog");
+  dialog.id = "beneficiaryEmailDialog";
+  dialog.className = "profile-dialog";
+
+  const form = document.createElement("form");
+  form.className = "capsule-form";
+
+  const title = document.createElement("h2");
+  title.textContent = "通知繼承人";
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = "請確認或修改下方通知內容，送出後會寄到繼承人的 Email。";
+
+  const subjectLabel = document.createElement("label");
+  subjectLabel.innerHTML = "<span>Email 主旨</span>";
+  const subjectInput = document.createElement("input");
+  subjectInput.type = "text";
+  subjectInput.maxLength = 120;
+  subjectInput.required = true;
+  subjectInput.value = notice.subject;
+  subjectLabel.append(subjectInput);
+
+  const bodyLabel = document.createElement("label");
+  bodyLabel.className = "message-field";
+  bodyLabel.innerHTML = "<span>通知內容</span>";
+  const bodyInput = document.createElement("textarea");
+  bodyInput.rows = 10;
+  bodyInput.maxLength = 1800;
+  bodyInput.required = true;
+  bodyInput.value = notice.body;
+  bodyLabel.append(bodyInput);
+
+  const actions = document.createElement("div");
+  actions.className = "dialog-actions";
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "secondary-button";
+  cancelButton.type = "button";
+  cancelButton.textContent = "稍後通知";
+  const sendButton = document.createElement("button");
+  sendButton.className = "primary-button";
+  sendButton.type = "button";
+  sendButton.textContent = "送出 Email";
+  actions.append(cancelButton, sendButton);
+
+  form.append(title, hint, subjectLabel, bodyLabel, actions);
+  dialog.append(form);
+  document.body.append(dialog);
+
+  cancelButton.addEventListener("click", () => dialog.close());
+  sendButton.addEventListener("click", async () => {
+    const subject = subjectInput.value.trim();
+    const body = bodyInput.value.trim();
+    if (!subject || !body) {
+      alert("請填寫 Email 主旨與通知內容。");
+      return;
+    }
+    sendButton.disabled = true;
+    sendButton.textContent = "送出中...";
+    await sendBeneficiaryEmail(beneficiary, subject, body);
+    dialog.close();
+  });
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  dialog.showModal();
 }
 
 async function addCapsule(event) {
@@ -2357,32 +2501,16 @@ async function addBeneficiary(event) {
     name: formData.get("name").trim(),
     email: formData.get("email").trim(),
     phone: formData.get("phone").trim(),
-    lineId: formData.get("lineId").trim(),
     relationship: formData.get("relationship").trim(),
     createdAt: new Date().toISOString(),
   };
   state.beneficiaries.unshift(beneficiary);
-  const registerUrl = getSiteUrl();
-  const subject = "您已被指定為時光寶盒繼承人";
-  const body = `${state.profile?.realName || getProfileDisplayName()} 已將您設定為時光寶盒繼承人。請前往 ${registerUrl} 使用 Google 登入註冊，未來可依設定條件接收重要訊息。`;
-  const mailto = `mailto:${encodeURIComponent(beneficiary.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  state.notifications.unshift({
-    id: uid(),
-    type: "heir-email",
-    userId: state.user.uid,
-    message: `已建立繼承人通知：${beneficiary.name}（${beneficiary.email}）`,
-    link: mailto,
-    linkLabel: "開啟 Email 草稿",
-    createdAt: new Date().toISOString(),
-  });
   await persistCollectionItem("beneficiaries", beneficiary);
   await saveHeirAccess(beneficiary);
   await persistAll();
   els.beneficiaryForm.reset();
   render();
-  if (confirm(`是否立即開啟 Email 草稿通知 ${beneficiary.name}？`)) {
-    window.location.href = mailto;
-  }
+  showBeneficiaryEmailDialog(beneficiary);
 }
 
 async function deleteBeneficiary(id) {
@@ -2482,7 +2610,6 @@ async function addInheritance(event) {
       name: beneficiary.name,
       email: beneficiary.email,
       phone: beneficiary.phone || "",
-      lineId: beneficiary.lineId || "",
       relationship: beneficiary.relationship || "",
     }));
 
