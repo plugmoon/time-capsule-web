@@ -208,6 +208,88 @@ function getBeneficiary(id) {
   return state.beneficiaries.find((beneficiary) => beneficiary.id === id) || null;
 }
 
+function getSelectedBeneficiaries(ids) {
+  return ids.map(getBeneficiary).filter(Boolean);
+}
+
+function getNotificationChannelLabel(channel) {
+  return {
+    email: "Email",
+    sms: "簡訊",
+    line: "Line",
+  }[channel] || channel;
+}
+
+function getSiteUrl() {
+  return `${location.origin}${location.pathname}`;
+}
+
+function getCapsuleReleaseNotice(capsule) {
+  if (capsule.releaseMode === "death") {
+    const required = Number(capsule.requiredConfirmations) || 1;
+    const bufferDays = Number(capsule.deathBufferDays || state.settings.deathBufferDays) || 7;
+    return `在我離世後，由 ${required} 位指定繼承人共同確認，並經過 ${bufferDays} 天緩衝時間後開啟。`;
+  }
+  return `指定日期：${formatDateTime(capsule.unlockAt)}`;
+}
+
+function buildCapsuleHeirNotice(capsule, beneficiary) {
+  const senderName = state.profile?.realName || getProfileDisplayName();
+  const subject = `您已被指定為「${capsule.title}」的時光寶盒繼承人`;
+  const body = [
+    `${beneficiary.name} 您好：`,
+    "",
+    `${senderName} 已將您指定為「${capsule.title}」時光寶盒的繼承人。`,
+    `開啟條件：${getCapsuleReleaseNotice(capsule)}`,
+    "",
+    `請前往 ${getSiteUrl()} 使用 Google 登入或註冊。未來符合開啟條件時，您可以在網站中查看被指定的訊息。`,
+  ].join("\n");
+  return { subject, body };
+}
+
+function createNotificationLink(channel, beneficiary, notice) {
+  const label = getNotificationChannelLabel(channel);
+  if (channel === "email") {
+    if (!beneficiary.email) {
+      return null;
+    }
+    return {
+      href: `mailto:${encodeURIComponent(beneficiary.email)}?subject=${encodeURIComponent(notice.subject)}&body=${encodeURIComponent(notice.body)}`,
+      label: "開啟 Email 草稿",
+      channelLabel: label,
+    };
+  }
+
+  if (channel === "sms") {
+    if (!beneficiary.phone) {
+      return null;
+    }
+    return {
+      href: `sms:${encodeURIComponent(beneficiary.phone)}?&body=${encodeURIComponent(notice.body)}`,
+      label: "開啟簡訊草稿",
+      channelLabel: label,
+    };
+  }
+
+  if (channel === "line") {
+    return {
+      href: `https://line.me/R/msg/text/?${encodeURIComponent(`${notice.subject}\n\n${notice.body}`)}`,
+      label: "開啟 Line 分享",
+      channelLabel: label,
+    };
+  }
+
+  return null;
+}
+
+function openNotificationDraft(link) {
+  if (link.href.startsWith("http")) {
+    window.open(link.href, "_blank", "noopener");
+    return;
+  }
+  window.location.href = link.href;
+}
+
 function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
@@ -1009,6 +1091,8 @@ async function saveHeirAccess(beneficiary) {
     beneficiaryId: beneficiary.id,
     name: beneficiary.name,
     email: normalizeEmail(beneficiary.email),
+    phone: beneficiary.phone || "",
+    lineId: beneficiary.lineId || "",
     relationship: beneficiary.relationship || "",
     createdAt: beneficiary.createdAt || new Date().toISOString(),
   };
@@ -1415,6 +1499,10 @@ function renderBeneficiaries() {
             <div>
               <strong>${escapeHtml(beneficiary.name)}</strong>
               <span>${escapeHtml(beneficiary.email)}</span>
+              <span>${escapeHtml([
+                beneficiary.phone ? `手機：${beneficiary.phone}` : "",
+                beneficiary.lineId ? `Line：${beneficiary.lineId}` : "",
+              ].filter(Boolean).join("｜") || "尚未設定手機或 Line")}</span>
             </div>
             <small>${escapeHtml(beneficiary.relationship || "未設定關係")}</small>
           `;
@@ -1733,7 +1821,8 @@ function renderAdmin() {
       title: note.message,
       body: note.type,
       date: note.createdAt,
-      mailto: note.mailto || "",
+      link: note.link || note.mailto || "",
+      linkLabel: note.linkLabel || (note.mailto ? "開啟 Email 草稿" : ""),
     })),
   ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -1748,11 +1837,15 @@ function renderAdmin() {
             <p>${escapeHtml(item.body)}</p>
             <time>${formatDateTime(item.date)}</time>
           `;
-          if (item.mailto) {
+          if (item.link) {
             const link = document.createElement("a");
             link.className = "attachment-link";
-            link.href = item.mailto;
-            link.textContent = "開啟 Email 草稿";
+            link.href = item.link;
+            link.textContent = item.linkLabel || "開啟通知連結";
+            if (item.link.startsWith("http")) {
+              link.target = "_blank";
+              link.rel = "noopener";
+            }
             row.append(link);
           }
           return row;
@@ -1952,6 +2045,104 @@ function resetFormDefaults() {
   updateCapsuleReleaseControls();
 }
 
+function showNotificationLinkDialog(links, skipped = []) {
+  if (!links.length && !skipped.length) {
+    return;
+  }
+
+  document.querySelector("#notificationLinksDialog")?.remove();
+  const dialog = document.createElement("dialog");
+  dialog.id = "notificationLinksDialog";
+  dialog.className = "profile-dialog";
+
+  const form = document.createElement("form");
+  form.method = "dialog";
+  form.className = "capsule-form";
+
+  const title = document.createElement("h2");
+  title.textContent = "繼承人通知";
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent = "請點選下方連結開啟通知草稿或分享視窗，再送出給繼承人。";
+  form.append(title, hint);
+
+  if (links.length) {
+    const list = document.createElement("div");
+    list.className = "notification-link-list";
+    links.forEach((linkItem) => {
+      const link = document.createElement("a");
+      link.className = "attachment-link";
+      link.href = linkItem.href;
+      link.textContent = `${linkItem.beneficiaryName}：${linkItem.label}`;
+      if (linkItem.href.startsWith("http")) {
+        link.target = "_blank";
+        link.rel = "noopener";
+      }
+      list.append(link);
+    });
+    form.append(list);
+  }
+
+  if (skipped.length) {
+    const skippedNote = document.createElement("p");
+    skippedNote.className = "form-error";
+    skippedNote.textContent = `以下通知缺少聯絡資料：${skipped.join("、")}`;
+    form.append(skippedNote);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "dialog-actions";
+  const closeButton = document.createElement("button");
+  closeButton.className = "primary-button";
+  closeButton.type = "submit";
+  closeButton.textContent = "完成";
+  actions.append(closeButton);
+  form.append(actions);
+
+  dialog.append(form);
+  document.body.append(dialog);
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  dialog.showModal();
+}
+
+async function notifyCapsuleHeirs(capsule, channels) {
+  const notifyChannels = [...new Set(channels)].filter(Boolean);
+  if (!notifyChannels.length) {
+    return;
+  }
+
+  const beneficiaries = getSelectedBeneficiaries(capsule.beneficiaryIds || []);
+  const links = [];
+  const skipped = [];
+
+  for (const beneficiary of beneficiaries) {
+    const notice = buildCapsuleHeirNotice(capsule, beneficiary);
+    for (const channel of notifyChannels) {
+      const link = createNotificationLink(channel, beneficiary, notice);
+      const channelLabel = getNotificationChannelLabel(channel);
+      if (!link) {
+        skipped.push(`${beneficiary.name} 缺少${channelLabel}`);
+        continue;
+      }
+
+      links.push({ ...link, beneficiaryName: beneficiary.name });
+      const notification = {
+        id: uid(),
+        type: "capsule-heir-notice",
+        userId: state.user.uid,
+        beneficiaryId: beneficiary.id,
+        channel,
+        message: `已建立時光寶盒繼承人通知：${beneficiary.name}（${channelLabel}）`,
+        createdAt: new Date().toISOString(),
+      };
+      state.notifications.unshift(notification);
+      await persistCollectionItem("notifications", notification);
+    }
+  }
+
+  showNotificationLinkDialog(links, skipped);
+}
+
 async function addCapsule(event) {
   event.preventDefault();
   if (!requireStandardUser()) {
@@ -1960,9 +2151,17 @@ async function addCapsule(event) {
 
   const formData = new FormData(els.capsuleForm);
   const beneficiaryIds = selectedValues(els.capsuleBeneficiaryInput);
+  const notifyChannels = formData.getAll("notifyChannels");
   const releaseMode = formData.get("releaseMode");
   if (releaseMode === "death" && beneficiaryIds.length === 0) {
     alert("選擇「在我離世後」時，請先新增並指定至少 1 位繼承人。");
+    return;
+  }
+  if (notifyChannels.length && beneficiaryIds.length === 0) {
+    alert("請先指定至少 1 位繼承人，才能建立通知。");
+    return;
+  }
+  if (notifyChannels.length && !requireCompleteProfile("通知繼承人")) {
     return;
   }
   const requiredConfirmations = releaseMode === "death" ? Math.min(
@@ -1999,6 +2198,7 @@ async function addCapsule(event) {
     videoUrl: formData.get("videoUrl").trim(),
     images,
     files,
+    notifyChannels,
     tone: formData.get("tone"),
     createdAt: new Date().toISOString(),
     openedAt: null,
@@ -2006,6 +2206,7 @@ async function addCapsule(event) {
 
   state.capsules.push(capsule);
   await persistCollectionItem("capsules", capsule);
+  await notifyCapsuleHeirs(capsule, notifyChannels);
   els.capsuleForm.reset();
   resetFormDefaults();
   render();
@@ -2155,20 +2356,23 @@ async function addBeneficiary(event) {
     id: uid(),
     name: formData.get("name").trim(),
     email: formData.get("email").trim(),
+    phone: formData.get("phone").trim(),
+    lineId: formData.get("lineId").trim(),
     relationship: formData.get("relationship").trim(),
     createdAt: new Date().toISOString(),
   };
   state.beneficiaries.unshift(beneficiary);
-  const registerUrl = `${location.origin}${location.pathname}`;
+  const registerUrl = getSiteUrl();
   const subject = "您已被指定為時光寶盒繼承人";
-  const body = `${state.profile?.displayName || state.user?.displayName || "一位用戶"} 已將您設定為時光寶盒繼承人。請前往 ${registerUrl} 使用 Google 登入註冊，未來可依設定條件接收重要訊息。`;
+  const body = `${state.profile?.realName || getProfileDisplayName()} 已將您設定為時光寶盒繼承人。請前往 ${registerUrl} 使用 Google 登入註冊，未來可依設定條件接收重要訊息。`;
   const mailto = `mailto:${encodeURIComponent(beneficiary.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   state.notifications.unshift({
     id: uid(),
     type: "heir-email",
     userId: state.user.uid,
     message: `已建立繼承人通知：${beneficiary.name}（${beneficiary.email}）`,
-    mailto,
+    link: mailto,
+    linkLabel: "開啟 Email 草稿",
     createdAt: new Date().toISOString(),
   });
   await persistCollectionItem("beneficiaries", beneficiary);
@@ -2277,6 +2481,8 @@ async function addInheritance(event) {
       id: beneficiary.id,
       name: beneficiary.name,
       email: beneficiary.email,
+      phone: beneficiary.phone || "",
+      lineId: beneficiary.lineId || "",
       relationship: beneficiary.relationship || "",
     }));
 
