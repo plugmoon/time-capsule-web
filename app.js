@@ -2159,6 +2159,18 @@ function buildBeneficiaryEmailNotice(beneficiary) {
   return { subject, body };
 }
 
+function getEmailQueueErrorMessage(error) {
+  const code = error?.code || "";
+  const detail = String(error?.message || "");
+  if (code === "permission-denied" || detail.includes("permission-denied")) {
+    return "Email 寄送佇列建立失敗：Firestore 規則尚未允許寫入 mail 集合。請到 Firebase Console > Firestore Database > Rules，貼上新版 firestore.rules 並發布。";
+  }
+  if (code === "unavailable" || detail.includes("unavailable")) {
+    return "Email 寄送佇列建立失敗：Firestore 目前無法連線，請確認網路、Firestore Database 與 Cloud Firestore API 都正常。";
+  }
+  return `Email 寄送佇列建立失敗：${code || detail || "未知錯誤"}`;
+}
+
 async function sendBeneficiaryEmail(beneficiary, subject, body) {
   if (!requireCompleteProfile("通知繼承人")) {
     return false;
@@ -2186,7 +2198,7 @@ async function sendBeneficiaryEmail(beneficiary, subject, body) {
     id: mailId,
     userId: state.user.uid,
     beneficiaryId: beneficiary.id,
-    to: [email],
+    to: email,
     message: {
       subject,
       text: body,
@@ -2201,6 +2213,18 @@ async function sendBeneficiaryEmail(beneficiary, subject, body) {
 
   try {
     await fb.setDoc(fb.doc(fb.db, "mail", mailId), mail);
+  } catch (error) {
+    console.error(error);
+    const message = getEmailQueueErrorMessage(error);
+    if (confirm(`${message}\n\n是否改用 Email 草稿通知？`)) {
+      window.location.href = mailto;
+      return true;
+    }
+    setAuthNotice(message, "error");
+    return false;
+  }
+
+  try {
     const notification = {
       id: uid(),
       type: "heir-email",
@@ -2213,17 +2237,14 @@ async function sendBeneficiaryEmail(beneficiary, subject, body) {
     };
     state.notifications.unshift(notification);
     await persistCollectionItem("notifications", notification);
-    setAuthNotice("Email 通知已送出寄送佇列；若 Firebase Trigger Email 擴充功能已啟用，系統會自動寄出。", "success");
-    return true;
   } catch (error) {
     console.error(error);
-    if (confirm("Email 寄送佇列建立失敗。是否改用 Email 草稿通知？")) {
-      window.location.href = mailto;
-      return true;
-    }
-    setAuthNotice("Email 寄送佇列建立失敗，請確認 Firestore 規則已發布，並已安裝 Firebase Trigger Email 擴充功能。", "error");
-    return false;
+    setAuthNotice("Email 已排入寄送佇列，但通知紀錄寫入失敗。請確認 Firestore 規則已發布。", "error");
+    return true;
   }
+
+  setAuthNotice("Email 通知已送出寄送佇列；若 Firebase Trigger Email 擴充功能已啟用，系統會自動寄出。", "success");
+  return true;
 }
 
 function showBeneficiaryEmailDialog(beneficiary) {
