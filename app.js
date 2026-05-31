@@ -2160,10 +2160,14 @@ function buildBeneficiaryEmailNotice(beneficiary) {
 }
 
 async function sendBeneficiaryEmail(beneficiary, subject, body) {
+  if (!requireCompleteProfile("通知繼承人")) {
+    return false;
+  }
+
   const email = normalizeEmail(beneficiary.email);
   if (!email) {
     alert("此繼承人尚未設定 Email。");
-    return;
+    return false;
   }
 
   const mailto = createBeneficiaryMailto(beneficiary, subject, body);
@@ -2172,7 +2176,7 @@ async function sendBeneficiaryEmail(beneficiary, subject, body) {
   if (!(state.mode === "firebase" && state.firebase && state.user)) {
     window.location.href = mailto;
     setAuthNotice("目前未連線 Firebase，已改用 Email 草稿方式通知。", "info");
-    return;
+    return true;
   }
 
   const fb = state.firebase;
@@ -2210,12 +2214,15 @@ async function sendBeneficiaryEmail(beneficiary, subject, body) {
     state.notifications.unshift(notification);
     await persistCollectionItem("notifications", notification);
     setAuthNotice("Email 通知已送出寄送佇列；若 Firebase Trigger Email 擴充功能已啟用，系統會自動寄出。", "success");
+    return true;
   } catch (error) {
     console.error(error);
     if (confirm("Email 寄送佇列建立失敗。是否改用 Email 草稿通知？")) {
       window.location.href = mailto;
+      return true;
     }
     setAuthNotice("Email 寄送佇列建立失敗，請確認 Firestore 規則已發布，並已安裝 Firebase Trigger Email 擴充功能。", "error");
+    return false;
   }
 }
 
@@ -2278,10 +2285,20 @@ function showBeneficiaryEmailDialog(beneficiary) {
       alert("請填寫 Email 主旨與通知內容。");
       return;
     }
+    if (getMissingProfileFields(true).length) {
+      dialog.close();
+      window.setTimeout(() => requireCompleteProfile("通知繼承人"), 0);
+      return;
+    }
     sendButton.disabled = true;
     sendButton.textContent = "送出中...";
-    await sendBeneficiaryEmail(beneficiary, subject, body);
-    dialog.close();
+    const sent = await sendBeneficiaryEmail(beneficiary, subject, body);
+    if (sent) {
+      dialog.close();
+      return;
+    }
+    sendButton.disabled = false;
+    sendButton.textContent = "送出 Email";
   });
   dialog.addEventListener("close", () => dialog.remove(), { once: true });
   dialog.showModal();
@@ -2491,9 +2508,6 @@ async function addBeneficiary(event) {
   if (!requireStandardUser()) {
     return;
   }
-  if (!requireCompleteProfile("通知繼承人")) {
-    return;
-  }
 
   const formData = new FormData(els.beneficiaryForm);
   const beneficiary = {
@@ -2505,12 +2519,18 @@ async function addBeneficiary(event) {
     createdAt: new Date().toISOString(),
   };
   state.beneficiaries.unshift(beneficiary);
-  await persistCollectionItem("beneficiaries", beneficiary);
-  await saveHeirAccess(beneficiary);
-  await persistAll();
   els.beneficiaryForm.reset();
   render();
   showBeneficiaryEmailDialog(beneficiary);
+
+  try {
+    await persistCollectionItem("beneficiaries", beneficiary);
+    await saveHeirAccess(beneficiary);
+  } catch (error) {
+    console.error(error);
+    await saveLocalData();
+    setAuthNotice("繼承人已先加入畫面；雲端同步失敗，請確認 Firestore 規則已發布後再重試登入同步。", "error");
+  }
 }
 
 async function deleteBeneficiary(id) {
