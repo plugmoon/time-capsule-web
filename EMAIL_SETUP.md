@@ -20,3 +20,7 @@
 6. 若 Firebase Trigger Email 已安裝且 SMTP 設定正確，系統會寄出通知信。
 
 若尚未安裝 Trigger Email 擴充功能，網站仍會建立寄信佇列文件，但不會真正寄出 Email。
+
+## 常見錯誤
+
+如果畫面顯示「Firestore 規則尚未允許寫入 mail 集合」，請先到 Firestore Database > Rules，貼上本專案最新的 `firestore.rules` 並按「發布」。GitHub Pages 上傳規則檔不等於 Firebase 已套用規則，Firebase Console 仍需要另外發布一次。
