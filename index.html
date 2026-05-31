@@ -9,7 +9,7 @@
     />
     <title>時光寶盒</title>
     <link rel="icon" href="assets/time-capsule.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20260530-member-shop" />
+    <link rel="stylesheet" href="styles.css?v=20260531-capsule-notify" />
   </head>
   <body>
     <div class="app-shell">
@@ -91,6 +91,22 @@
                   <span>指定繼承人</span>
                   <select id="capsuleBeneficiaryInput" name="beneficiaryIds" multiple size="4"></select>
                 </label>
+                <fieldset class="tone-field notify-field">
+                  <legend>通知繼承人</legend>
+                  <label>
+                    <input type="checkbox" name="notifyChannels" value="email" />
+                    Email
+                  </label>
+                  <label>
+                    <input type="checkbox" name="notifyChannels" value="sms" />
+                    簡訊
+                  </label>
+                  <label>
+                    <input type="checkbox" name="notifyChannels" value="line" />
+                    Line
+                  </label>
+                  <p class="hint">封存寶盒後會建立通知紀錄，並可開啟 Email、簡訊或 Line 分享草稿；Line 需由您選擇對應聯絡人送出。</p>
+                </fieldset>
                 <label>
                   <span>開啟條件</span>
                   <select id="capsuleReleaseModeInput" name="releaseMode">
@@ -248,6 +264,14 @@
                 <label>
                   <span>Email</span>
                   <input name="email" type="email" required />
+                </label>
+                <label>
+                  <span>手機號碼</span>
+                  <input name="phone" type="tel" maxlength="30" placeholder="用於簡訊通知，可留空" />
+                </label>
+                <label>
+                  <span>Line ID</span>
+                  <input name="lineId" type="text" maxlength="60" placeholder="用於辨識 Line 聯絡人，可留空" />
                 </label>
                 <label>
                   <span>關係</span>
@@ -528,7 +552,7 @@
       </article>
     </template>
 
-    <script src="firebase-config.js?v=20260530-member-shop"></script>
-    <script src="app.js?v=20260530-member-shop"></script>
+    <script src="firebase-config.js?v=20260531-capsule-notify"></script>
+    <script src="app.js?v=20260531-capsule-notify"></script>
   </body>
 </html>
