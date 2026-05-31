@@ -9,7 +9,7 @@
     />
     <title>時光寶盒</title>
     <link rel="icon" href="assets/time-capsule.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20260531-capsule-notify" />
+    <link rel="stylesheet" href="styles.css?v=20260531-email-notify" />
   </head>
   <body>
     <div class="app-shell">
@@ -101,11 +101,7 @@
                     <input type="checkbox" name="notifyChannels" value="sms" />
                     簡訊
                   </label>
-                  <label>
-                    <input type="checkbox" name="notifyChannels" value="line" />
-                    Line
-                  </label>
-                  <p class="hint">封存寶盒後會建立通知紀錄，並可開啟 Email、簡訊或 Line 分享草稿；Line 需由您選擇對應聯絡人送出。</p>
+                  <p class="hint">封存寶盒後會建立通知紀錄，並可開啟 Email 或簡訊通知草稿。</p>
                 </fieldset>
                 <label>
                   <span>開啟條件</span>
@@ -268,10 +264,6 @@
                 <label>
                   <span>手機號碼</span>
                   <input name="phone" type="tel" maxlength="30" placeholder="用於簡訊通知，可留空" />
-                </label>
-                <label>
-                  <span>Line ID</span>
-                  <input name="lineId" type="text" maxlength="60" placeholder="用於辨識 Line 聯絡人，可留空" />
                 </label>
                 <label>
                   <span>關係</span>
@@ -552,7 +544,7 @@
       </article>
     </template>
 
-    <script src="firebase-config.js?v=20260531-capsule-notify"></script>
-    <script src="app.js?v=20260531-capsule-notify"></script>
+    <script src="firebase-config.js?v=20260531-email-notify"></script>
+    <script src="app.js?v=20260531-email-notify"></script>
   </body>
 </html>
