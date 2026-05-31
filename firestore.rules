@@ -64,6 +64,18 @@ service cloud.firestore {
       allow update, delete: if isSuperAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
     }
 
+    match /mail/{mailId} {
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.to is list
+        && request.resource.data.to.size() == 1
+        && request.resource.data.message is map
+        && request.resource.data.message.subject is string
+        && request.resource.data.message.text is string;
+      allow read: if isSuperAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow update, delete: if false;
+    }
+
     match /platform/settings {
       allow read: if true;
       allow write: if isSuperAdmin();
