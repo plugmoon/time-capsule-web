@@ -2171,6 +2171,62 @@ function getEmailQueueErrorMessage(error) {
   return `Email 寄送佇列建立失敗：${code || detail || "未知錯誤"}`;
 }
 
+function getEmailDeliveryNotice(mailId, mailData) {
+  const delivery = mailData?.delivery;
+  if (!delivery) {
+    return {
+      level: "info",
+      text: `Email 已寫入 mail 佇列，但尚未偵測到 Firebase Trigger Email 擴充功能處理紀錄。請確認擴充功能已安裝，且 Email documents collection 設為 mail。寄送文件 ID：${mailId}`,
+    };
+  }
+
+  if (delivery.state === "SUCCESS") {
+    const accepted = delivery.info?.accepted?.join("、") || mailData.to || "收件人";
+    return {
+      level: "success",
+      text: `Email 已由 SMTP 接受寄送。收件人：${accepted}。若收件匣沒有看到，請檢查垃圾郵件或促銷分類。`,
+    };
+  }
+
+  if (delivery.state === "ERROR") {
+    return {
+      level: "error",
+      text: `Email 寄送失敗：${delivery.error || "SMTP 或擴充功能回報錯誤，請到 Firebase Extensions 查看詳細記錄。"}`,
+    };
+  }
+
+  return {
+    level: "info",
+    text: `Email 正在由 Firebase Trigger Email 處理中，目前狀態：${delivery.state || "PENDING"}。`,
+  };
+}
+
+async function waitForEmailDeliveryNotice(mailId) {
+  if (!(state.mode === "firebase" && state.firebase && state.user)) {
+    return null;
+  }
+
+  const fb = state.firebase;
+  const mailRef = fb.doc(fb.db, "mail", mailId);
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1500 : 2500));
+    const mailSnap = await fb.getDoc(mailRef);
+    if (!mailSnap.exists()) {
+      return {
+        level: "error",
+        text: `找不到寄送佇列文件 ${mailId}，請確認 Firestore 規則與 mail 集合。`,
+      };
+    }
+    const notice = getEmailDeliveryNotice(mailId, mailSnap.data());
+    if (mailSnap.data()?.delivery?.state) {
+      return notice;
+    }
+  }
+
+  const mailSnap = await fb.getDoc(mailRef);
+  return getEmailDeliveryNotice(mailId, mailSnap.exists() ? mailSnap.data() : null);
+}
+
 async function sendBeneficiaryEmail(beneficiary, subject, body) {
   if (!requireCompleteProfile("通知繼承人")) {
     return false;
@@ -2213,6 +2269,7 @@ async function sendBeneficiaryEmail(beneficiary, subject, body) {
 
   try {
     await fb.setDoc(fb.doc(fb.db, "mail", mailId), mail);
+    setAuthNotice("Email 已寫入寄送佇列，正在檢查 Firebase Trigger Email 處理狀態。", "info");
   } catch (error) {
     console.error(error);
     const message = getEmailQueueErrorMessage(error);
@@ -2243,7 +2300,17 @@ async function sendBeneficiaryEmail(beneficiary, subject, body) {
     return true;
   }
 
-  setAuthNotice("Email 通知已送出寄送佇列；若 Firebase Trigger Email 擴充功能已啟用，系統會自動寄出。", "success");
+  try {
+    const deliveryNotice = await waitForEmailDeliveryNotice(mailId);
+    if (deliveryNotice) {
+      setAuthNotice(deliveryNotice.text, deliveryNotice.level);
+    } else {
+      setAuthNotice("Email 已寫入寄送佇列。請確認 Firebase Trigger Email 擴充功能已啟用，系統才會自動寄出。", "info");
+    }
+  } catch (error) {
+    console.error(error);
+    setAuthNotice(`Email 已寫入寄送佇列，但讀取寄送狀態失敗：${error?.code || error?.message || "未知錯誤"}`, "error");
+  }
   return true;
 }
 
